@@ -1,0 +1,16 @@
+{
+  "name": "akb-erp",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:api": "pnpm --filter @akb/api dev",
+    "dev:client": "pnpm --filter @akb/client dev",
+    "migrate": "pnpm --filter @akb/api migrate",
+    "seed": "pnpm --filter @akb/api seed",
+    "test": "pnpm --filter @akb/api test",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

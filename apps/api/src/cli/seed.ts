@@ -2,6 +2,9 @@
 // Refuses to run in production or on a database that already has users.
 import pg from 'pg';
 import { hashPassword } from '../auth.js';
+import { loadDotEnv } from '../env-file.js';
+
+loadDotEnv();
 
 export const DEMO_PASSWORD = 'Demo-Pass-2026';
 

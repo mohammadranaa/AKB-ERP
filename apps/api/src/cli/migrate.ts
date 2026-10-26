@@ -4,6 +4,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
 import { dbDir } from './paths.js';
+import { loadDotEnv } from '../env-file.js';
+
+loadDotEnv();
 
 export async function migrate(url: string, log = console.log): Promise<string[]> {
   const client = new pg.Client({ connectionString: url });

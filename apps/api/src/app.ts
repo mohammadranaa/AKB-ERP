@@ -37,7 +37,7 @@ declare module 'fastify' {
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: deps.config.NODE_ENV === 'test' ? false : { level: 'info', redact: ['req.headers.authorization'] },
-    trustProxy: true,
+    trustProxy: deps.config.TRUST_PROXY,
     bodyLimit: 2 * 1024 * 1024
   });
 

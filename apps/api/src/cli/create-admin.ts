@@ -3,6 +3,9 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { hashPassword } from '../auth.js';
+import { loadDotEnv } from '../env-file.js';
+
+loadDotEnv();
 
 const [username, fullName] = process.argv.slice(2);
 if (!username || !fullName) {

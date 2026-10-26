@@ -122,7 +122,7 @@ const OG_LIST_SQL = `
          p.city as customer_city, s.bags, s.dispatched_bags, s.total_value, s.paid, s.outstanding, s.fulfilment, s.payment,
          (select string_agg(distinct pr.name_en, ', ') from og_lines l join products pr on pr.id = l.product_id where l.og_id = o.id) as products,
          exists (select 1 from receipt_allocations a where a.og_id = o.id and a.reversed_at is not null) as has_returned_cheque,
-         cu.full_name as created_by_name, o.created_at
+         cu.full_name as created_by_name, o.created_by, o.created_at
     from ogs o
     join parties p on p.id = o.customer_id
     join branches b on b.id = o.branch_id

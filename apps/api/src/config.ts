@@ -18,7 +18,12 @@ const Env = z.object({
   LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(10),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   TIMEZONE: z.string().default('Asia/Karachi'),
-  FIRM_CODE: z.string().default('AKB')
+  FIRM_CODE: z.string().default('AKB'),
+  // true only when the API sits behind our own web server (Docker setup), so client IPs come from X-Forwarded-For.
+  TRUST_PROXY: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true')
 });
 
 export type Config = z.infer<typeof Env>;

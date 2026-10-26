@@ -1,0 +1,58 @@
+# One-command local setup:  cp .env.example .env  (then change the passwords)  &&  docker compose up -d --build
+# Open http://localhost:8080
+name: akb-erp
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      AKB_OWNER_PASSWORD: ${AKB_OWNER_PASSWORD:?Set AKB_OWNER_PASSWORD in .env}
+      AKB_APP_PASSWORD: ${AKB_APP_PASSWORD:?Set AKB_APP_PASSWORD in .env}
+      AKB_CREATE_TEST_DB: "true"
+      TZ: Asia/Karachi
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    # Reachable only from this computer (for running the tests). Never open this to the network.
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d akb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      HOST: 0.0.0.0
+      PORT: "4000"
+      DATABASE_URL: postgres://akb_app:${AKB_APP_PASSWORD}@db:5432/akb
+      MIGRATION_DATABASE_URL: postgres://akb_owner:${AKB_OWNER_PASSWORD}@db:5432/akb
+      REQUIRE_TOTP: ${REQUIRE_TOTP:-true}
+      TIMEZONE: ${TIMEZONE:-Asia/Karachi}
+      CORS_ORIGINS: http://localhost:8080
+      TRUST_PROXY: "true"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/client/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    # 127.0.0.1 = this laptop only. Set WEB_BIND=0.0.0.0 in .env to let other computers on the office network in.
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:8080:8080"
+
+volumes:
+  db-data:

@@ -10,6 +10,9 @@ import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { formatPkr } from '../lib/money.js';
 import { checkDay, importCashBookDay, parseCashBook, type CashBookDay } from '../services/cashbook.js';
+import { loadDotEnv } from '../env-file.js';
+
+loadDotEnv();
 
 const args = process.argv.slice(2);
 const useLedger = args.includes('--ledger');

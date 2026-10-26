@@ -127,7 +127,7 @@ export async function dayRoutes(app: FastifyInstance) {
   app.get('/:date', { preHandler: requirePerm('day.close', 'ledger.read') }, async (req) => {
     const { date } = z.object({ date: DateStr }).parse(req.params);
     return app.read(req, async (c) => {
-      const day = await maybeOne(c, 'select d.*, u.full_name as locked_by_name from business_days d left join users u on u.id = d.locked_by where business_date = $1', [date]);
+      const day = await maybeOne(c, 'select d.business_date, d.status, d.locked_at, d.locked_by, d.checklist, d.export_sha256, d.csv_sha256, u.full_name as locked_by_name from business_days d left join users u on u.id = d.locked_by where business_date = $1', [date]);
       const accounts = await moneyAccountsForDay(c, date);
       const pending = await many(
         c,

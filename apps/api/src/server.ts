@@ -1,6 +1,9 @@
 import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 import { Database } from './db.js';
+import { loadDotEnv } from './env-file.js';
+
+loadDotEnv();
 
 const config = loadConfig();
 const db = new Database(config.DATABASE_URL, config.TIMEZONE);

@@ -35,7 +35,7 @@ On each deploy, `vercel-build` applies new migrations (creating `akb_app` if mis
 
 1. Create the Neon database from the Vercel Storage tab, region **Singapore** (or Frankfurt, then change `regions` in `apps/api/vercel.json` to `fra1`).
 2. Create project `akb-erp-api` from the GitHub repo, root directory `apps/api`, framework Fastify. Connect the Neon database to it. Add the variables above. Deploy.
-3. In `apps/client/vercel.json`, replace `AKB_API_HOST` with the API project's address (e.g. `akb-erp-api.vercel.app`). Commit.
+3. In `apps/client/vercel.json`, the `/api` rewrite points at the API project's address (`akb-erp-api.vercel.app`); change it if the API project is renamed.
 4. Create project `akb-erp` from the same repo, root directory `apps/client`, framework Vite. Deploy.
 5. Open the screens' address, sign in as `owner` with the trial password, and check the yellow trial banner is showing.
 

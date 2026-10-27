@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://AKB_API_HOST/api/:path*"
+      "destination": "https://akb-erp-api.vercel.app/api/:path*"
     },
     {
       "source": "/(.*)",

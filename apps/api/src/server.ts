@@ -23,5 +23,13 @@ const shutdown = async () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-await app.listen({ host: config.HOST, port: config.PORT });
-console.log(`AKB ERP API listening on ${config.HOST}:${config.PORT}${config.TRIAL_MODE ? ' (TRIAL MODE: practice data only)' : ''}`);
+await app.ready();
+// Not awaited: on Vercel the runtime intercepts listen() to capture the server and never reports it
+// as started, so awaiting here would stop the module from finishing loading.
+app
+  .listen({ host: config.HOST, port: config.PORT })
+  .then(() => console.log(`AKB ERP API listening on ${config.HOST}:${config.PORT}${config.TRIAL_MODE ? ' (TRIAL MODE: practice data only)' : ''}`))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

@@ -4,6 +4,7 @@ import { api, qs } from '../lib/api';
 import { d, rs } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Confirm, Empty, ErrorBox, Field, FormError, Loading, PageHead, Panel, PaymentPill, Seg, useApi, useSubmitKey, useToast } from '../components/ui';
+import { uuid } from '../lib/uuid';
 
 const MODE: Record<string, string> = { cash: 'Cash', cheque: 'Cheque', bank_transfer: 'Bank transfer', online: 'Online' };
 
@@ -77,7 +78,7 @@ export function Receipts() {
           }
           onClose={() => setRet(null)}
           onConfirm={async (reason) => {
-            const r = await api.post(`/api/receipts/${ret.id}/return`, { reason, bankCharges: charges || '0' }, crypto.randomUUID());
+            const r = await api.post(`/api/receipts/${ret.id}/return`, { reason, bankCharges: charges || '0' }, uuid());
             toast(`${r.returnNo} recorded`);
             await list.reload();
           }}

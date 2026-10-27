@@ -28,7 +28,7 @@ export function Stock() {
       </div>
       <Panel pad={false}>
         <div className="table-wrap">
-          <table className="t">
+          <table className="t keep">
             <thead>
               <tr><th>Product</th>{data.branches.map((b: any) => <th key={b.id} className="num">{b.code}</th>)}<th className="num">Total</th></tr>
             </thead>

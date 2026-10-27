@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Starts the API and the screens on this Mac (after tools/mac-setup.sh). Press Ctrl+C to stop both.
+#   ./tools/start.sh        this Mac only
+#   ./tools/start.sh --lan  also phones and computers on the same Wi-Fi
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if command -v brew >/dev/null; then export PATH="$(brew --prefix postgresql@17)/bin:$(brew --prefix node@22)/bin:$PATH"; fi
@@ -7,9 +9,15 @@ pg_isready -q -h localhost || { command -v brew >/dev/null && brew services star
 pnpm migrate
 trap 'kill 0' EXIT
 pnpm dev:api &
+if [ "${1:-}" = "--lan" ]; then export AKB_LAN=true; fi
 pnpm dev:client &
 sleep 3
 echo
 echo "AKB ERP is running at http://localhost:5173   (Ctrl+C to stop)"
+if [ "${AKB_LAN:-}" = "true" ]; then
+  ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
+  echo "On a phone on the same Wi-Fi, open in Chrome:  http://${ip:-THIS-MAC-IP}:5173"
+  echo "(The first time, macOS may ask whether to allow incoming connections: choose Allow.)"
+fi
 (command -v open >/dev/null && open http://localhost:5173) || true
 wait

@@ -1,8 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, HashRouter, MemoryRouter, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useSession } from './lib/session';
 import { api } from './lib/api';
 import { d, initials } from './lib/format';
+import { Icon } from './components/icons';
+import { DEMO } from './lib/demo';
+
+// The demo copy is a single file opened from anywhere, so it keeps its place in the URL hash.
+// A hosted demo page (published link) cannot use the address bar, so it keeps its place in memory.
+const Router = DEMO ? (DEMO.router === 'memory' ? MemoryRouter : HashRouter) : BrowserRouter;
 import { Login, AccountSetup } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Approvals } from './pages/Approvals';
@@ -82,12 +88,66 @@ const ROLE_LABEL: Record<string, string> = {
   distribution: 'Distribution', accounts: 'Accounts', auditor: 'Auditor · read-only', admin: 'Admin'
 };
 
+/** Phone tab bar: the first four screens this person can use, in order of everyday use. */
+const TAB_PRIORITY: { to: string; label: string; icon: string }[] = [
+  { to: '/dashboard', label: 'Home', icon: 'home' },
+  { to: '/dispatch', label: 'Dispatch', icon: 'truck' },
+  { to: '/ogs', label: 'OGs', icon: 'list' },
+  { to: '/ogs/new', label: 'New OG', icon: 'plus' },
+  { to: '/receipts/new', label: 'Receive', icon: 'cash' },
+  { to: '/approvals', label: 'Approve', icon: 'check' },
+  { to: '/stock', label: 'Stock', icon: 'box' },
+  { to: '/customers', label: 'Customers', icon: 'people' },
+  { to: '/days', label: 'Day close', icon: 'lock' },
+  { to: '/ledger/journals', label: 'Ledger', icon: 'book' },
+  { to: '/admin/users', label: 'Users', icon: 'user' },
+  { to: '/admin/audit', label: 'Audit', icon: 'shield' }
+];
+
+/**
+ * On phones, tables are shown as cards. Each cell needs its column heading as a label;
+ * this copies the heading text onto every cell whenever a table renders or changes.
+ */
+function useCardLabels() {
+  useEffect(() => {
+    const label = (root: ParentNode) => {
+      root.querySelectorAll<HTMLTableElement>('table.t').forEach((t) => {
+        const heads = [...t.querySelectorAll('thead th')].map((th) => th.textContent?.trim() ?? '');
+        if (!heads.length) return;
+        t.querySelectorAll('tbody tr, tfoot tr').forEach((tr) => {
+          let col = 0;
+          for (const td of [...tr.children] as HTMLTableCellElement[]) {
+            const want = heads[col] ?? '';
+            if (td.colSpan > 1) td.removeAttribute('data-label');
+            else if (td.getAttribute('data-label') !== want) td.setAttribute('data-label', want);
+            col += td.colSpan || 1;
+          }
+        });
+      });
+    };
+    label(document);
+    let queued = false;
+    const obs = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; label(document); });
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, []);
+}
+
 function Shell({ children }: { children: ReactNode }) {
   const { me, signOut } = useSession();
   const nav = useNav();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
-  useEffect(() => setOpen(false), [loc.pathname]);
+  useCardLabels();
+  useEffect(() => { setOpen(false); window.scrollTo(0, 0); }, [loc.pathname]);
+  useEffect(() => {
+    document.body.style.overflow = open ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [open]);
   const [theme, setTheme] = useState<string>(() => {
     try { return localStorage.getItem('akb.theme') ?? 'auto'; } catch { return 'auto'; }
   });
@@ -97,9 +157,20 @@ function Shell({ children }: { children: ReactNode }) {
     try { localStorage.setItem('akb.theme', theme); } catch { /* ignore */ }
   }, [theme]);
   if (!me) return null;
+  const allowed = nav.flatMap((g) => g.items);
+  const badgeFor = (to: string) => allowed.find((i) => i.to === to)?.badge;
+  const tabs = TAB_PRIORITY.filter((t) => allowed.some((i) => i.to === t.to)).slice(0, 4);
+  const themeSelect = (cls: string) => (
+    <select className={`input ${cls}`} style={{ width: 'auto', minHeight: 30 }} value={theme} onChange={(e) => setTheme(e.target.value)} aria-label="Theme">
+      <option value="auto">Theme: system</option>
+      <option value="light">Theme: light</option>
+      <option value="dark">Theme: dark</option>
+    </select>
+  );
   return (
     <div className="shell">
-      <aside className={`sidebar${open ? ' open' : ''}`}>
+      <div className={`drawer-backdrop${open ? ' open' : ''}`} onClick={() => setOpen(false)} />
+      <aside className={`sidebar${open ? ' open' : ''}`} aria-label="Main menu">
         <div className="brand">
           <div className="brand-mark">A</div>
           <div>
@@ -111,7 +182,7 @@ function Shell({ children }: { children: ReactNode }) {
           <div className="nav-group" key={g.group}>
             <div className="nav-group-title">{g.group}</div>
             {g.items.map((i) => (
-              <NavLink key={i.to} to={i.to} end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              <NavLink key={i.to} to={i.to} end onClick={() => setOpen(false)} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
                 {i.label}
                 {!!i.badge && <span className="nav-badge">{i.badge}</span>}
               </NavLink>
@@ -122,27 +193,40 @@ function Shell({ children }: { children: ReactNode }) {
           Business date
           <strong>{d(me.businessDate).toUpperCase()}</strong>
         </div>
+        <div className="drawer-foot">
+          <div><strong>{me.fullName}</strong><div className="small" style={{ color: '#94bce3' }}>{ROLE_LABEL[me.role] ?? me.role}</div></div>
+          {themeSelect('')}
+          <button className="btn" onClick={signOut}>Sign out</button>
+        </div>
       </aside>
       <div className="main">
         <header className="topbar no-print">
-          <button className="btn btn-sm menu-btn" onClick={() => setOpen(!open)} aria-label="Menu">Menu</button>
+          <button className="menu-btn" onClick={() => setOpen(!open)} aria-label="Open menu" aria-expanded={open}><Icon name="menu" /></button>
+          <span className="topbar-brand menu-only">AKB</span>
           <span className="day-pill"><span className="dot" style={{ background: 'var(--green)' }} />{d(me.businessDate)}</span>
           <div className="spacer" />
-          <select className="input hide-sm" style={{ width: 'auto', minHeight: 30 }} value={theme} onChange={(e) => setTheme(e.target.value)} aria-label="Theme">
-            <option value="auto">Theme: system</option>
-            <option value="light">Theme: light</option>
-            <option value="dark">Theme: dark</option>
-          </select>
+          {themeSelect('hide-sm')}
           <div className="user-chip">
-            <div className="avatar">{initials(me.fullName)}</div>
+            <div className="avatar" title={me.fullName}>{initials(me.fullName)}</div>
             <div className="hide-sm">
               <div style={{ fontWeight: 600 }}>{me.fullName}</div>
               <div className="small muted">{ROLE_LABEL[me.role] ?? me.role}</div>
             </div>
           </div>
-          <button className="btn btn-sm" onClick={signOut}>Sign out</button>
+          <button className="btn btn-sm hide-sm" onClick={signOut}>Sign out</button>
         </header>
+        {DEMO && <div className="demo-band no-print">Demo copy · made-up data · nothing is saved</div>}
         <main className="content">{children}</main>
+        <nav className="tabbar no-print" aria-label="Quick links">
+          {tabs.map((t) => (
+            <NavLink key={t.to} to={t.to} end className={({ isActive }) => (isActive ? 'active' : '')}>
+              <Icon name={t.icon} />
+              {t.label}
+              {!!badgeFor(t.to) && <span className="tab-badge">{badgeFor(t.to)}</span>}
+            </NavLink>
+          ))}
+          <button onClick={() => setOpen(true)}><Icon name="more" />More</button>
+        </nav>
       </div>
     </div>
   );
@@ -160,7 +244,7 @@ export function App() {
   if (!me) return <Login />;
   if (me.scope !== 'full') return <AccountSetup />;
   return (
-    <BrowserRouter>
+    <Router>
       <Shell>
         <Routes>
           <Route path="/" element={<Navigate to={home(can)} replace />} />
@@ -191,6 +275,6 @@ export function App() {
           <Route path="*" element={<div className="note">Page not found.</div>} />
         </Routes>
       </Shell>
-    </BrowserRouter>
+    </Router>
   );
 }

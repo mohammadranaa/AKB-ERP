@@ -56,7 +56,8 @@ export function CustomerDetail() {
   const [to, setTo] = useState('');
   const p = useApi(() => api.get(`/api/parties/${id}`), [id]);
   const st = useApi(() => api.get(`/api/parties/${id}/statement${qs({ from, to })}`), [id, from, to]);
-  const ogs = useApi(() => api.get(`/api/ogs${qs({ customerId: id })}`), [id]);
+  const seeOgs = can('og.read', 'og.read.own');
+  const ogs = useApi(() => (seeOgs ? api.get(`/api/ogs${qs({ customerId: id })}`) : Promise.resolve([])), [id, seeOgs]);
   if (p.loading && !p.data) return <Loading />;
   if (p.error) return <ErrorBox error={p.error} />;
   const c = p.data;
@@ -108,7 +109,7 @@ export function CustomerDetail() {
             </div>
           )}
         </Panel>
-        <Panel title="OGs" pad={false}>
+        {seeOgs && <Panel title="OGs" pad={false}>
           {ogs.loading && !ogs.data ? <Loading /> : !ogs.data?.length ? <Empty>No OGs yet.</Empty> : (
             <table className="t">
               <thead><tr><th>OG</th><th>Date</th><th>Products</th><th className="num">Value</th><th className="num">Outstanding</th><th>Status</th></tr></thead>
@@ -126,7 +127,7 @@ export function CustomerDetail() {
               </tbody>
             </table>
           )}
-        </Panel>
+        </Panel>}
       </div>
     </>
   );

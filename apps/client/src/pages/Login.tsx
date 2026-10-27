@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { api, ApiError } from '../lib/api';
 import { useSession } from '../lib/session';
 import { Field, FormError } from '../components/ui';
+import { DEMO } from '../lib/demo';
 
 export function Login() {
   const { signIn } = useSession();
@@ -39,7 +40,7 @@ export function Login() {
           </div>
         </div>
         <Field label="Username">
-          <input className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+          <input className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus={!DEMO} required />
         </Field>
         <Field label="Password">
           <input className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
@@ -51,6 +52,27 @@ export function Login() {
         )}
         {error ? <FormError error={error} /> : null}
         <button className="btn btn-primary" disabled={busy} style={{ justifyContent: 'center' }}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        {DEMO && (
+          <div className="stack demo-picker">
+            <div className="note">
+              <strong>Demo copy.</strong> Made-up data, nothing is saved. Choose a role to see what that person sees
+              (password for all: <span className="mono">{DEMO.password}</span>).
+            </div>
+            <div className="demo-roles">
+              {DEMO.users.map((u) => (
+                <button type="button" key={u.username} className="btn" disabled={busy} onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const r = await api.post<{ token: string }>('/api/auth/login', { username: u.username, password: DEMO!.password });
+                    await signIn(r.token);
+                  } catch (err) { setError(err); } finally { setBusy(false); }
+                }}>
+                  <span>{u.roleLabel}</span><span className="small muted">{u.username}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </form>
     </div>
   );

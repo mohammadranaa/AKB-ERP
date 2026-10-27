@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../lib/api';
+import { uuid } from '../lib/uuid';
 
 // ---------------- data loading ----------------
 export function useApi<T>(load: () => Promise<T>, deps: unknown[] = []) {
@@ -31,8 +32,8 @@ export function useApi<T>(load: () => Promise<T>, deps: unknown[] = []) {
 
 /** One idempotency key per form submission; renew it after a success. */
 export function useSubmitKey() {
-  const ref = useRef(crypto.randomUUID());
-  return { key: () => ref.current, renew: () => (ref.current = crypto.randomUUID()) };
+  const ref = useRef(uuid());
+  return { key: () => ref.current, renew: () => (ref.current = uuid()) };
 }
 
 export function Loading({ what = 'Loading' }: { what?: string }) {

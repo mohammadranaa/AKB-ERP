@@ -27,7 +27,11 @@ Open http://localhost:8080 and sign in as `owner` / `Demo-Pass-2026`.
 ./tools/start.sh       # every time you want to use it
 ```
 
-Open http://localhost:5173.
+Open http://localhost:5173. To use it from phones on the same Wi-Fi, start with `./tools/start.sh --lan` (details in the guide).
+
+## Demo copy for phones
+
+`node tools/build-demo.mjs` builds `dist-demo/akb-erp-demo.html`: one file, made-up data, read-only, opens in any browser with no server. Build it only from demo data (the script refuses otherwise).
 
 ## Demo users
 

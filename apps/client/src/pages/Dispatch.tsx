@@ -153,7 +153,7 @@ export function GatePass() {
           <div style={{ textAlign: 'right' }}><div style={{ fontFamily: 'var(--font-heading)', fontSize: 22, fontWeight: 600 }}>{x.gate_pass_no}</div><div className="small muted">{x.dispatch_no} · {d(x.business_date)}</div></div>
         </div>
         <hr style={{ border: 0, borderTop: '1px solid var(--divider)', margin: '14px 0' }} />
-        <table className="t">
+        <table className="t keep">
           <tbody>
             <tr><td className="muted">Customer</td><td><strong>{x.customer_name}</strong>, {x.customer_city} {x.customer_name_ur && <span className="urdu" style={{ marginLeft: 8 }}>{x.customer_name_ur}</span>}</td></tr>
             <tr><td className="muted">Against OG</td><td>{x.og_no}</td></tr>
@@ -161,7 +161,7 @@ export function GatePass() {
             <tr><td className="muted">Bilty</td><td>{x.bilty_no ?? '—'}{x.transporter_name ? ` · ${x.transporter_name}` : ''}</td></tr>
           </tbody>
         </table>
-        <table className="t" style={{ marginTop: 14 }}>
+        <table className="t keep" style={{ marginTop: 14 }}>
           <thead><tr><th>Product</th><th className="num">Bags</th><th className="num">Weight</th></tr></thead>
           <tbody>{x.lines.map((l: any, i: number) => <tr key={i}><td>{l.name_en} {l.name_ur && <span className="urdu">{l.name_ur}</span>}</td><td className="num">{bags(l.bags)}</td><td className="num">{tons(l.bags, Number(l.bag_kg))}</td></tr>)}</tbody>
           <tfoot><tr><td>Total</td><td className="num">{bags(total)}</td><td className="num">{tons(total)}</td></tr></tfoot>

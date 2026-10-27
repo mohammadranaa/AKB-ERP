@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { bags, d, dt, rs } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Confirm, ErrorBox, Field, Loading, PageHead, Panel, useApi, useToast } from '../components/ui';
+import { uuid } from '../lib/uuid';
 
 export function DayClose() {
   const { me, can } = useSession();
@@ -144,7 +145,7 @@ export function DayClose() {
             await api.post(`/api/days/${date}/lock`, {
               counts: Object.entries(counts).filter(([, v]) => v !== '').map(([accountId, amount]) => ({ accountId: Number(accountId), amount: Number(amount).toFixed(2) })),
               note: note || null
-            }, crypto.randomUUID());
+            }, uuid());
             toast(`${d(date)} locked`);
             await day.reload();
           }}

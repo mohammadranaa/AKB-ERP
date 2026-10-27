@@ -153,7 +153,7 @@ export function OgDetail() {
         <div className="stack">
           <div className="grid2">
             <Panel title="Order">
-              <table className="t">
+              <table className="t keep kv">
                 <tbody>
                   <tr><td className="muted">Terms</td><td>{o.terms === 'cbd' ? 'Cash before delivery' : `${o.terms === 'loan' ? 'Loan' : 'Credit'} · ${o.advance_pct}% advance · ${o.credit_days} days`}</td></tr>
                   <tr><td className="muted">Due</td><td>{o.terms === 'cbd' ? 'Before dispatch' : d(o.due_date)}</td></tr>

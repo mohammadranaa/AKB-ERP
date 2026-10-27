@@ -3,6 +3,7 @@ import { api, qs } from '../lib/api';
 import { dt, rs } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Confirm, Dialog, Empty, ErrorBox, Field, FormError, Loading, PageHead, Panel, Seg, useApi, useSubmitKey, useToast } from '../components/ui';
+import { uuid } from '../lib/uuid';
 
 // ---------------- Users ----------------
 export function Users() {
@@ -146,7 +147,7 @@ function ResetForm({ user, onClose, onDone }: { user: any; onClose: () => void; 
       danger
       onClose={onClose}
       onConfirm={async () => {
-        const r = await api.post(`/api/admin/users/${user.id}/reset`, { password, totp }, crypto.randomUUID());
+        const r = await api.post(`/api/admin/users/${user.id}/reset`, { password, totp }, uuid());
         onDone(r.temporaryPassword);
       }}
     />

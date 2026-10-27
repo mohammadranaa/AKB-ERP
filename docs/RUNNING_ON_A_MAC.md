@@ -51,6 +51,20 @@ Everyday commands:
    ```
    It opens http://localhost:5173. Press Ctrl+C in that window to stop.
 
+## Using it on a phone
+
+The screens are built for phones too: a bottom bar with each role's main screens, a menu behind the ☰ button, lists shown as cards, and forms that slide up from the bottom. Use Chrome.
+
+**Phones on the same Wi-Fi as the laptop (Homebrew option):**
+
+1. Start with `./tools/start.sh --lan`. It prints an address such as `http://192.168.1.20:5173`.
+2. Open that address in Chrome on the phone. The first time, macOS may ask whether to allow incoming connections; choose Allow.
+3. In Chrome's menu, choose **Add to Home screen** to get an AKB ERP icon that opens full screen.
+
+For the Docker option, set `WEB_BIND=0.0.0.0` in `.env` (see below) and open `http://<laptop address>:8080` on the phone.
+
+**A demo copy that needs no laptop:** `node tools/build-demo.mjs` (with the system running on demo data) writes `dist-demo/akb-erp-demo.html`, a single file with made-up data that opens in any browser, including on a phone. Nothing in it can be saved. It refuses to build if the database has any non-demo users, so real data cannot end up in the file.
+
 ## Letting other computers in the office use it
 
 By default only the laptop itself can open the system. To let other computers on the same Wi-Fi/network in (Docker option):

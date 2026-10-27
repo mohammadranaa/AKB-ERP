@@ -5,6 +5,7 @@ import { api } from './lib/api';
 import { d, initials } from './lib/format';
 import { Icon } from './components/icons';
 import { DEMO } from './lib/demo';
+import { TRIAL_TEXT, useInfo } from './lib/info';
 
 // The demo copy is a single file opened from anywhere, so it keeps its place in the URL hash.
 // A hosted demo page (published link) cannot use the address bar, so it keeps its place in memory.
@@ -140,6 +141,7 @@ function useCardLabels() {
 function Shell({ children }: { children: ReactNode }) {
   const { me, signOut } = useSession();
   const nav = useNav();
+  const info = useInfo();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
   useCardLabels();
@@ -216,6 +218,7 @@ function Shell({ children }: { children: ReactNode }) {
           <button className="btn btn-sm hide-sm" onClick={signOut}>Sign out</button>
         </header>
         {DEMO && <div className="demo-band no-print">Demo copy · made-up data · nothing is saved</div>}
+        {!DEMO && info?.trial && <div className="demo-band trial-band no-print" role="note">{TRIAL_TEXT}</div>}
         <main className="content">{children}</main>
         <nav className="tabbar no-print" aria-label="Quick links">
           {tabs.map((t) => (

@@ -55,7 +55,7 @@ const day2: Row[] = [
 
 let db: Database;
 beforeAll(() => {
-  db = new Database(APP_URL);
+  db = new Database(APP_URL, 'Asia/Karachi', process.env.DB_SET_ROLE);
 });
 afterAll(async () => db.close());
 

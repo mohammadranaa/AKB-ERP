@@ -17,6 +17,7 @@ import { dayRoutes } from './routes/days.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { adminRoutes } from './routes/admin.js';
 import { approvalRoutes } from './routes/approvals.js';
+import { trialRoutes } from './routes/trial.js';
 
 export interface AppDeps {
   config: Config;
@@ -130,6 +131,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get('/health', async () => ({ ok: true }));
+  // Public: lets the sign-in screen show the practice-system banner before anyone signs in.
+  app.get('/api/info', async () => ({ trial: deps.config.TRIAL_MODE }));
 
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(mastersRoutes, { prefix: '/api' });
@@ -141,6 +144,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(dashboardRoutes, { prefix: '/api/dashboard' });
   await app.register(approvalRoutes, { prefix: '/api/approvals' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
+  await app.register(trialRoutes, { prefix: '/api/trial' });
 
   return app;
 }

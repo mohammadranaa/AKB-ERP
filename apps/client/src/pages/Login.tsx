@@ -4,6 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { useSession } from '../lib/session';
 import { Field, FormError } from '../components/ui';
 import { DEMO } from '../lib/demo';
+import { useInfo } from '../lib/info';
 
 export function Login() {
   const { signIn } = useSession();
@@ -13,6 +14,7 @@ export function Login() {
   const [needTotp, setNeedTotp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const info = useInfo();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +41,7 @@ export function Login() {
             <div className="small muted">Operations ERP · secure internal system</div>
           </div>
         </div>
+        {info?.trial && <div className="note note-amber"><strong>Trial system.</strong> Practice data only. Don't enter real customers, amounts or bank details.</div>}
         <Field label="Username">
           <input className="input" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus={!DEMO} required />
         </Field>

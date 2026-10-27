@@ -4,6 +4,7 @@ import { dt, rs } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Confirm, Dialog, Empty, ErrorBox, Field, FormError, Loading, PageHead, Panel, Seg, useApi, useSubmitKey, useToast } from '../components/ui';
 import { uuid } from '../lib/uuid';
+import { useInfo } from '../lib/info';
 
 // ---------------- Users ----------------
 export function Users() {
@@ -49,6 +50,7 @@ export function Users() {
           </div>
         )}
       </Panel>
+      <TrialReset />
       {edit && (
         <UserForm user={edit} roles={roles.data?.roles ?? []} branches={(branches.data ?? []).filter((b: any) => b.active)} onClose={() => setEdit(null)}
           onSaved={(pw) => { if (pw) setTemp({ who: pw.who, pw: pw.pw }); void users.reload(); }} />
@@ -372,3 +374,35 @@ export function AuditLog() {
   );
 }
 
+
+/** Practice system only: wipe everything back to the starting demo data. */
+function TrialReset() {
+  const info = useInfo();
+  const { signOut } = useSession();
+  const [ask, setAsk] = useState(false);
+  if (!info?.trial) return null;
+  return (
+    <div style={{ marginTop: 16 }}>
+      <Panel title="Trial data">
+        <div className="stack">
+          <div>This is a practice system. Resetting deletes every OG, receipt, entry and user added during the trial and starts again from the demo data. Everyone is signed out.</div>
+          <div><button className="btn btn-danger" onClick={() => setAsk(true)}>Reset trial data</button></div>
+        </div>
+      </Panel>
+      {ask && (
+        <Confirm
+          title="Reset all trial data?"
+          body="Everything entered during the trial is deleted and the demo data is loaded again. This cannot be undone."
+          confirmLabel="Reset"
+          danger
+          needComment="Type RESET to confirm"
+          onClose={() => setAsk(false)}
+          onConfirm={async (typed) => {
+            await api.post('/api/trial/reset', { confirm: typed.trim() }, uuid());
+            await signOut();
+          }}
+        />
+      )}
+    </div>
+  );
+}

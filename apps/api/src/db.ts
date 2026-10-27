@@ -17,9 +17,34 @@ export class Database {
 
   constructor(
     connectionString: string,
-    private timeZone = 'Asia/Karachi'
+    private timeZone = 'Asia/Karachi',
+    /** Restricted role to switch to inside every transaction (Neon/Vercel setup). */
+    private setRole?: string
   ) {
+    if (setRole && !/^[a-z_][a-z0-9_]*$/.test(setRole)) throw new Error('Invalid DB_SET_ROLE');
     this.pool = new pg.Pool({ connectionString, max: 10, idleTimeoutMillis: 30_000 });
+    // Every connection becomes the restricted role as soon as it opens, so nothing on it can see
+    // past row-level security. Transactions also set it locally (below) for poolers that reuse
+    // server connections. Use a direct (unpooled) connection with DB_SET_ROLE.
+    if (setRole) this.pool.on('connect', (c) => { void c.query(`set role ${setRole}`).catch(() => undefined); });
+  }
+
+  /**
+   * Refuse to serve requests if the role queries run as could see past row-level security
+   * (a superuser, a BYPASSRLS role, or the owner of the tables).
+   */
+  async assertRestricted(): Promise<void> {
+    const r = await this.tx(null, (c) =>
+      one<{ who: string; bypass: boolean; owns: number }>(
+        c,
+        `select current_user as who, (rolsuper or rolbypassrls) as bypass,
+                (select count(*)::int from pg_tables where schemaname = 'public' and tableowner = current_user) as owns
+           from pg_roles where rolname = current_user`
+      )
+    );
+    if (r.bypass || r.owns > 0) {
+      throw new Error(`The API is running as "${r.who}", which bypasses row-level security. Connect as akb_app or set DB_SET_ROLE=akb_app.`);
+    }
   }
 
   /**
@@ -30,6 +55,7 @@ export class Database {
     const c = await this.pool.connect();
     try {
       await c.query('begin');
+      if (this.setRole) await c.query(`set local role ${this.setRole}`);
       // current_date in SQL (used for overdue checks) follows the business time zone.
       await c.query("select set_config('TimeZone', $1, true)", [this.timeZone]);
       if (ctx) {

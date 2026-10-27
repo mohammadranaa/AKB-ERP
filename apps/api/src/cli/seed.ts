@@ -21,8 +21,9 @@ export const DEMO_USERS = [
   { username: 'admin', fullName: 'Demo Admin', role: 'admin' }
 ] as const;
 
-export async function seed(url: string, opts: { date: string; log?: (s: string) => void } = { date: '2026-10-01' }) {
+export async function seed(url: string, opts: { date: string; log?: (s: string) => void; password?: string } = { date: '2026-10-01' }) {
   const log = opts.log ?? console.log;
+  if (process.env.NODE_ENV === 'production' && process.env.TRIAL_MODE !== 'true') throw new Error('Refusing to load demo data in production');
   const c = new pg.Client({ connectionString: url });
   await c.connect();
   try {
@@ -45,7 +46,7 @@ export async function seed(url: string, opts: { date: string; log?: (s: string) 
       branches[code] = (await c.query('insert into branches(firm_id, code, name_en, name_ur, kind) values ($1,$2,$3,$4,$5) returning id', [firm, code, en, ur, kind])).rows[0].id;
     }
 
-    const pw = await hashPassword(DEMO_PASSWORD);
+    const pw = await hashPassword(opts.password ?? DEMO_PASSWORD);
     const users: Record<string, number> = {};
     for (const u of DEMO_USERS) {
       users[u.username] = (
@@ -157,7 +158,7 @@ export async function seed(url: string, opts: { date: string; log?: (s: string) 
 
     await c.query("insert into audit_log(user_id, action, entity, entity_id, detail) values ($1,'seed','database',null,'{\"demo\":true}')", [users.admin]);
     await c.query('commit');
-    log(`Seeded demo data. Sign in as owner / ${DEMO_PASSWORD} (other users: ${DEMO_USERS.map((u) => u.username).join(', ')})`);
+    log(`Seeded demo data. Sign in as owner / ${opts.password ? '(the trial password)' : DEMO_PASSWORD} (other users: ${DEMO_USERS.map((u) => u.username).join(', ')})`);
     return { firm, branches, users, products, parties, banks };
   } catch (err) {
     await c.query('rollback').catch(() => undefined);

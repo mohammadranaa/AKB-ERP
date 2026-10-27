@@ -5,10 +5,11 @@ Fertilizer distribution ERP for AKB Group (Pakistan). pnpm monorepo: `apps/api` 
 ## Rules that must not be broken
 - Never commit client data. `*.xlsx`, `*.xls`, `*.csv`, `data/`, `backups/`, `.env` are git-ignored; do not force-add them. Real files may be read locally only.
 - Do not send company data to any third-party service.
-- Never edit an applied migration; add a new numbered file. `pnpm migrate` refuses edited files.
+- Never edit an applied migration; add a new numbered file. `pnpm migrate` refuses edited files. After adding one, run `node tools/embed-migrations.mjs` (a test fails if the embedded copy drifts).
 - Money is `numeric(18,2)` in the database and strings in TypeScript (`lib/money.ts` converts to paisa BigInt). Never use floating point for money.
 - Posted journal entries are immutable; corrections are reversals. Business rules live in the database (triggers in `003_ledger.sql`, `006_security.sql`); keep them there.
-- The API connects as `akb_app` (row-level security applies, fails closed). Migrations run as `akb_owner`.
+- The API connects as `akb_app` (row-level security applies, fails closed), or on Neon/Vercel as the owner login with `DB_SET_ROLE=akb_app`. It refuses to start if queries would bypass RLS. Migrations run as the owner.
+- The Vercel trial (`docs/DEPLOY_VERCEL_TRIAL.md`) is for made-up data only (`TRIAL_MODE=true`). Never put real company data on it.
 - `REQUIRE_TOTP` must stay true in production; demo seed refuses production.
 
 ## Commands
@@ -18,6 +19,7 @@ Fertilizer distribution ERP for AKB Group (Pakistan). pnpm monorepo: `apps/api` 
 - Settings come from `.env` at the repo root (see `.env.example`).
 
 ## Layout
+- `apps/api/src/server.ts` starts the API (Vercel's entry point); `build-app.ts` builds it.
 - `apps/api/src/routes/*` one file per area; writes go through `app.mutate` (one transaction, idempotency key, audit).
 - `apps/api/src/services/posting.ts` the only way to post ledger entries.
 - `apps/client/src/pages/*` one file per area; shared bits in `components/ui.tsx`.

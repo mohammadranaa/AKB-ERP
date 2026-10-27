@@ -14,3 +14,4 @@ coverage/
 !**/test/fixtures/*.csv
 data/
 backups/
+.vercel/

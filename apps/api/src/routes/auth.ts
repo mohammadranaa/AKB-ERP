@@ -32,6 +32,16 @@ export async function authRoutes(app: FastifyInstance) {
     { config: { rateLimit: { max: config.LOGIN_RATE_LIMIT, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const body = Login.parse(req.body);
+      // Per-address limit kept in the database, so it holds across every running copy of the API.
+      const recent = await db.tx(null, async (c) => {
+        await c.query("delete from login_attempts where at < now() - interval '1 hour'");
+        const n = await one<{ n: number }>(c, "select count(*)::int as n from login_attempts where ip = $1 and at > now() - interval '1 minute'", [req.ip]);
+        await c.query('insert into login_attempts(ip) values ($1)', [req.ip]);
+        return n.n;
+      });
+      if (recent >= config.LOGIN_RATE_LIMIT) {
+        return reply.status(429).send({ error: 'rate_limited', message: 'Too many sign-in attempts from this connection. Wait a minute and try again.' });
+      }
       const result = await db.tx(null, async (c) => {
         const u = await maybeOne<{
           id: number;

@@ -37,6 +37,10 @@ Open http://localhost:5173. To use it from phones on the same Wi-Fi, start with 
 
 All use the password `Demo-Pass-2026`: `owner`, `accounts`, `accounts2`, `sales1`, `sales2`, `dist`, `procure`, `finance`, `auditor`, `admin`. Demo data is refused when `NODE_ENV=production`.
 
+## Trial on Vercel (practice data only)
+
+See [docs/DEPLOY_VERCEL_TRIAL.md](docs/DEPLOY_VERCEL_TRIAL.md). Made-up data only; real data stays on the client's own server.
+
 ## Before real data goes in
 
 1. Set `NODE_ENV=production` and `REQUIRE_TOTP=true` in `.env`.

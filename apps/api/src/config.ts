@@ -19,6 +19,15 @@ const Env = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   TIMEZONE: z.string().default('Asia/Karachi'),
   FIRM_CODE: z.string().default('AKB'),
+  // Neon/Vercel: the API connects with the database owner login and switches to this restricted
+  // role at the start of every transaction, so row-level security still applies (e.g. akb_app).
+  DB_SET_ROLE: z.string().regex(/^[a-z_][a-z0-9_]*$/).optional(),
+  // Practice system for staff to try with made-up data: shows a trial banner everywhere and allows
+  // the owner to reset to demo data. Never set for a system holding real data.
+  TRIAL_MODE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   // true only when the API sits behind our own web server (Docker setup), so client IPs come from X-Forwarded-For.
   TRUST_PROXY: z
     .enum(['true', 'false'])
@@ -35,8 +44,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Invalid configuration: ${issues}`);
   }
   const cfg = parsed.data;
-  if (cfg.NODE_ENV === 'production' && !cfg.REQUIRE_TOTP) {
-    throw new Error('REQUIRE_TOTP cannot be false in production');
+  if (cfg.NODE_ENV === 'production' && !cfg.REQUIRE_TOTP && !cfg.TRIAL_MODE) {
+    throw new Error('REQUIRE_TOTP cannot be false in production (only a TRIAL_MODE practice system may switch it off)');
   }
   return cfg;
 }

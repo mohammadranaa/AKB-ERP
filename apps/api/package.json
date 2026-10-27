@@ -9,6 +9,9 @@
     "start": "node dist/src/server.js",
     "migrate": "tsx src/cli/migrate.ts",
     "seed": "tsx src/cli/seed.ts",
+    "trial:init": "tsx src/cli/trial.ts init",
+    "vercel-build": "node ../../tools/embed-migrations.mjs && tsx src/cli/trial.ts init",
+    "trial:reset": "tsx src/cli/trial.ts reset",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

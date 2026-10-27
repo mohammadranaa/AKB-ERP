@@ -16,6 +16,6 @@ export default async function setup() {
   } finally {
     await c.end();
   }
-  await migrate(OWNER_URL, () => undefined);
+  await migrate(OWNER_URL, () => undefined, { ensureAppRole: !!process.env.DB_SET_ROLE });
   await seed(OWNER_URL, { date: SEED_DATE, log: () => undefined });
 }

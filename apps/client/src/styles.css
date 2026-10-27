@@ -320,3 +320,4 @@ td.short { background: var(--amber-bg); }
 .login { overflow-y: auto; min-height: 100dvh; }
 .demo-picker .mono { white-space: nowrap; word-break: normal; }
 @media (max-width: 860px) { .demo-band { position: sticky; top: 54px; z-index: 29; } }
+.trial-band { font-weight: 600; }

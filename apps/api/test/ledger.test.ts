@@ -12,7 +12,7 @@ let firm: number;
 const tx = <T>(fn: (c: Db) => Promise<T>) => db.tx({ userId: I.users.accounts!, role: 'accounts' }, fn);
 
 beforeAll(async () => {
-  db = new Database(APP_URL);
+  db = new Database(APP_URL, 'Asia/Karachi', process.env.DB_SET_ROLE);
   I = await ids();
   firm = Number((await ownerQuery('select id from firms limit 1'))[0].id);
 });

@@ -197,7 +197,10 @@ describe('audit log', () => {
 describe('row-level security', () => {
   it('a sales rep sees only their own customers, and nothing at all without a role', async () => {
     const mine = await db.tx({ userId: I.users.sales1!, role: 'sales' }, async (c) => (await c.query("select code from parties where kind = 'customer' order by code")).rows.map((r) => r.code));
-    expect(mine).toEqual(['C001', 'C002', 'C003', 'C004']);
+    const assigned = (await ownerQuery("select code from parties where kind = 'customer' and rep_user_id = $1 order by code", [I.users.sales1])).map((r) => r.code);
+    expect(mine).toEqual(assigned);
+    expect(mine).toEqual(expect.arrayContaining(['C001', 'C002', 'C003', 'C004']));
+    expect(mine).not.toContain('C005'); // sales2's customer
     const none = await db.pool.query('select count(*)::int as n from parties');
     expect(none.rows[0].n).toBe(0);
   });

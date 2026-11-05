@@ -260,6 +260,11 @@ td.short { background: var(--amber-bg); }
   .input { min-height: 44px; font-size: 16px; }
   .seg { display: flex; width: 100%; overflow-x: auto; }
   .seg button { flex: 1 0 auto; min-height: 40px; font-size: 14px; }
+  /* Four longer choices (where goods are collected from): two by two instead of a scrolling strip */
+  .seg-grid .seg { display: grid; grid-template-columns: 1fr 1fr; overflow: visible; }
+  .seg-grid .seg button { border-left: 0; border-top: 1px solid var(--divider); white-space: normal; padding: 8px 6px; }
+  .seg-grid .seg button:nth-child(-n+2) { border-top: 0; }
+  .seg-grid .seg button:nth-child(2n) { border-left: 1px solid var(--divider); }
   .form-grid { grid-template-columns: 1fr; }
   .split { grid-template-columns: 1fr; }
   .grid4 { grid-template-columns: 1fr 1fr; }

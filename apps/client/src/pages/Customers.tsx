@@ -3,11 +3,14 @@ import { Link, useParams } from 'react-router-dom';
 import { api, qs } from '../lib/api';
 import { d, rs } from '../lib/format';
 import { useSession } from '../lib/session';
-import { Empty, ErrorBox, Field, Loading, PageHead, Panel, useApi } from '../components/ui';
+import { Empty, ErrorBox, Field, Loading, PageHead, Panel, useApi, useToast } from '../components/ui';
+import { NewCustomerDialog } from '../components/masters';
 
 export function Customers() {
   const { can } = useSession();
   const [q, setQ] = useState('');
+  const [adding, setAdding] = useState(false);
+  const toast = useToast();
   const list = useApi(() => api.get(`/api/parties${qs({ kind: 'customer', q })}`), [q]);
   const rows = list.data ?? [];
   const totalOwed = rows.reduce((s: number, r: any) => s + Math.max(0, Number(r.balance ?? 0)), 0);
@@ -15,8 +18,10 @@ export function Customers() {
   return (
     <>
       <PageHead kicker="Sales" title={can('og.read') ? 'Customers' : 'My customers'} sub={`${rows.length} customers · ${rs(totalOwed, { keepZero: true })} owed${over ? ` · ${over} over their credit limit` : ''}`}>
+        {can('customer.create', 'masters.write') && <button className="btn" onClick={() => setAdding(true)}>New customer</button>}
         {can('og.create') && <Link className="btn btn-primary" to="/ogs/new">New OG</Link>}
       </PageHead>
+      {adding && <NewCustomerDialog onClose={() => setAdding(false)} onCreated={(c) => { setAdding(false); toast(`Customer ${c.code} added`); void list.reload(); }} />}
       <div style={{ maxWidth: 360, marginBottom: 12 }}>
         <input className="input" placeholder="Search by name, code or Urdu name" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>

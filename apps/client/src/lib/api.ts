@@ -92,6 +92,13 @@ export const api = {
   get: <T = any>(p: string) => request<T>('GET', p),
   post: <T = any>(p: string, b?: unknown, key?: string) => request<T>('POST', p, b ?? {}, { key }),
   put: <T = any>(p: string, b?: unknown, key?: string) => request<T>('PUT', p, b ?? {}, { key }),
+  /** Fetch an image or file with the sign-in token, as a local blob: address for <img src>. */
+  async blobUrl(p: string) {
+    if (DEMO) throw new ApiError(403, 'Photos are not included in the demo copy.');
+    const res = await fetch(BASE + p, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new ApiError(res.status, 'Could not load the file');
+    return URL.createObjectURL(await res.blob());
+  },
   async download(p: string, filename: string) {
     if (DEMO) throw new ApiError(403, 'Downloads are switched off in the demo copy.');
     const res = await fetch(BASE + p, { headers: token ? { authorization: `Bearer ${token}` } : {} });

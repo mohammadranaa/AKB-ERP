@@ -115,7 +115,18 @@ export async function seed(url: string, opts: { date: string; log?: (s: string) 
     }
 
     // Opening stock.
+    // Stock held away from AKB's own godowns: at a company plant, and at a customer's warehouse (amanat).
+    branches.CS001 = (await c.query(
+      "insert into branches(firm_id, code, name_en, kind, city, party_id) values ($1,'CS001','Engro Daharki Plant','company_site','Daharki',$2) returning id",
+      [firm, parties.S003]
+    )).rows[0].id;
+    branches.AM001 = (await c.query(
+      "insert into branches(firm_id, code, name_en, kind, city, party_id) values ($1,'AM001',$2,'amanat','Lahore',$3) returning id",
+      [firm, 'Yousaf Traders warehouse (amanat)', parties.C001]
+    )).rows[0].id;
+
     const opening: [string, string, number][] = [
+      ['ENG-U', 'CS001', 2500], ['SONA-U', 'AM001', 350],
       ['SONA-U', 'PK', 4200], ['SONA-U', 'SWL', 3100], ['SONA-U', 'MUL', 2600], ['SONA-U', 'BWP', 1800], ['SONA-U', 'FSD', 2900],
       ['SARS-U', 'PK', 3800], ['SARS-U', 'SWL', 1200], ['SARS-U', 'MUL', 2200], ['SARS-U', 'FSD', 2400],
       ['ENG-U', 'PK', 2100], ['ENG-U', 'SWL', 900], ['ENG-U', 'BWP', 1300], ['ENG-U', 'FSD', 1700],

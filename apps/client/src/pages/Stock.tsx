@@ -3,6 +3,11 @@ import { api, qs } from '../lib/api';
 import { bags, d, dt, tons } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Dialog, Empty, ErrorBox, Field, FormError, Loading, PageHead, Panel, Seg, useApi, useSubmitKey, useToast } from '../components/ui';
+import { KIND_LABEL, NewLocationDialog } from '../components/masters';
+
+const GROUPS: [string, string][] = [['godown', 'AKB stores'], ['company_site', 'At company warehouse / plant (maal)'], ['amanat', 'At customer warehouses (amanat)']];
+/** Stock locations that hold a count: AKB stores, company warehouses/plants and customer warehouses. */
+export const STOCK_KINDS = ['godown', 'company_site', 'amanat'];
 
 type Measure = 'available' | 'on_hand' | 'committed' | 'unpurchased';
 
@@ -10,13 +15,25 @@ export function Stock() {
   const { data, error, loading, reload } = useApi(() => api.get('/api/stock/matrix'), []);
   const [m, setM] = useState<Measure>('available');
   const [cell, setCell] = useState<{ product: any; branch: any } | null>(null);
+  const [add, setAdd] = useState<null | 'company_site' | 'amanat'>(null);
+  const { can } = useSession();
+  const toast = useToast();
   if (loading && !data) return <Loading />;
   if (error) return <ErrorBox error={error} onRetry={reload} />;
+  const groups = GROUPS.map(([k, label]) => ({ k, label, branches: data.branches.filter((b: any) => (k === 'godown' ? !['company_site', 'amanat'].includes(b.kind) : b.kind === k)) })).filter((g) => g.branches.length);
+  const cols = groups.flatMap((g) => g.branches);
   const get = (p: number, b: number) => data.cells.find((c: any) => c.product_id === p && c.branch_id === b);
   const sum = (k: Measure) => data.cells.reduce((s: number, c: any) => s + Number(c[k]), 0);
   return (
     <>
-      <PageHead kicker="Distribution" title="Branch stock" sub="Every figure is calculated from receipts, dispatches, transfers and approved adjustments. Click a figure to see its history." />
+      <PageHead kicker="Distribution" title="Branch stock" sub="AKB stores, stock held at company warehouses and plants, and stock kept at customer warehouses (amanat). Every figure is calculated from receipts, dispatches, transfers and approved adjustments. Click a figure to see its history.">
+        {can('locations.manage', 'masters.write') && (
+          <>
+            <button className="btn" onClick={() => setAdd('company_site')}>Add company warehouse</button>
+            <button className="btn" onClick={() => setAdd('amanat')}>Add amanat warehouse</button>
+          </>
+        )}
+      </PageHead>
       <div className="grid4" style={{ marginBottom: 16 }}>
         <div className="kpi"><div className="label">On hand</div><div className="value">{bags(sum('on_hand'))} bags</div><div className="sub">{tons(sum('on_hand'))}</div></div>
         <div className="kpi"><div className="label">Committed to OGs</div><div className="value">{bags(sum('committed'))} bags</div><div className="sub">approved, not yet dispatched</div></div>
@@ -30,15 +47,16 @@ export function Stock() {
         <div className="table-wrap">
           <table className="t keep">
             <thead>
-              <tr><th>Product</th>{data.branches.map((b: any) => <th key={b.id} className="num">{b.code}</th>)}<th className="num">Total</th></tr>
+              <tr><th />{groups.map((g) => <th key={g.k} colSpan={g.branches.length} className="num" style={{ borderLeft: '1px solid var(--divider)' }}>{g.label}</th>)}<th /></tr>
+              <tr><th>Product</th>{cols.map((b: any) => <th key={b.id} className="num" title={`${b.name_en}${b.party_name ? ` · ${b.party_name}` : ''}`}>{b.code}</th>)}<th className="num">Total</th></tr>
             </thead>
             <tbody>
               {data.products.map((p: any) => {
-                const total = data.branches.reduce((s: number, b: any) => s + Number(get(p.id, b.id)?.[m] ?? 0), 0);
+                const total = cols.reduce((s: number, b: any) => s + Number(get(p.id, b.id)?.[m] ?? 0), 0);
                 return (
                   <tr key={p.id}>
                     <td>{p.name_en} <span className="muted small">· {p.manufacturer}</span></td>
-                    {data.branches.map((b: any) => {
+                    {cols.map((b: any) => {
                       const c = get(p.id, b.id);
                       const v = Number(c?.[m] ?? 0);
                       const short = Number(c?.available ?? 0) < 0;
@@ -58,6 +76,14 @@ export function Stock() {
           </table>
         </div>
       </Panel>
+      {groups.length > 1 && (
+        <div className="small muted" style={{ marginTop: 8 }}>
+          {cols.filter((b: any) => b.kind !== 'godown').map((b: any) => `${b.code}: ${b.name_en}`).join(' · ')}
+        </div>
+      )}
+      {add && (
+        <NewLocationDialog kind={add} onClose={() => setAdd(null)} onCreated={(l) => { setAdd(null); toast(`${l.code} · ${l.name} added`); void reload(); }} />
+      )}
       {cell && <Movements product={cell.product} branch={cell.branch} onClose={() => { setCell(null); void reload(); }} />}
     </>
   );
@@ -125,7 +151,7 @@ export function GoodsReceipts() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <PageHead kicker="Distribution" title="Goods receipts" sub="Bags received into a godown from a company order.">
+      <PageHead kicker="Distribution" title="Goods receipts" sub="Bags received from a company order into an AKB store, or recorded as held at the company warehouse / plant or at a customer warehouse (amanat).">
         {can('stock.receive') && <button className="btn btn-primary" onClick={() => setOpen(true)}>Receive goods</button>}
       </PageHead>
       <Panel pad={false}>
@@ -159,7 +185,7 @@ function ReceiveForm({ onClose, onDone }: { onClose: () => void; onDone: () => v
   return (
     <Dialog title="Receive goods" onClose={onClose} wide>
       <div className="form-grid">
-        <Field label="Godown"><select className="input" value={branchId} onChange={(e) => setBranch(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{(branches.data ?? []).filter((b: any) => b.kind === 'godown').map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en}</option>)}</select></Field>
+        <Field label="Received at"><select className="input" value={branchId} onChange={(e) => setBranch(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{(branches.data ?? []).filter((b: any) => b.active && STOCK_KINDS.includes(b.kind)).map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en} ({KIND_LABEL[b.kind]})</option>)}</select></Field>
         <Field label="Supplier"><select className="input" value={supplierId} onChange={(e) => setSupplier(e.target.value ? Number(e.target.value) : '')}><option value="">—</option>{(suppliers.data ?? []).map((s: any) => <option key={s.id} value={s.id}>{s.name_en}</option>)}</select></Field>
         <Field label="Company order (CO) number"><input className="input" value={co} onChange={(e) => setCo(e.target.value)} /></Field>
         <Field label="Truck"><input className="input" value={truck} onChange={(e) => setTruck(e.target.value.toUpperCase())} /></Field>
@@ -209,7 +235,7 @@ export function Transfers() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <PageHead kicker="Distribution" title="Stock transfers" sub="Stock leaves the sending godown when dispatched and arrives when the receiving godown confirms it.">
+      <PageHead kicker="Distribution" title="Stock transfers" sub="Stock leaves the sending location when dispatched and arrives when the receiving location confirms it. Use this to lift maal from a plant or amanat into an AKB store.">
         {can('stock.transfer') && <button className="btn btn-primary" onClick={() => setOpen(true)}>Send stock</button>}
       </PageHead>
       <Panel pad={false}>
@@ -244,12 +270,12 @@ function TransferForm({ onClose, onDone }: { onClose: () => void; onDone: () => 
   const [productId, setProduct] = useState<number | ''>('');
   const [n, setN] = useState('');
   const [err, setErr] = useState<unknown>(null);
-  const godowns = (branches.data ?? []).filter((b: any) => b.kind === 'godown');
+  const godowns = (branches.data ?? []).filter((b: any) => b.active && STOCK_KINDS.includes(b.kind));
   return (
-    <Dialog title="Send stock to another godown" onClose={onClose}>
+    <Dialog title="Move stock between locations" onClose={onClose}>
       <div className="form-grid">
-        <Field label="From"><select className="input" value={from} onChange={(e) => setFrom(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{godowns.map((b: any) => <option key={b.id} value={b.id}>{b.code}</option>)}</select></Field>
-        <Field label="To"><select className="input" value={to} onChange={(e) => setTo(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{godowns.filter((b: any) => b.id !== from).map((b: any) => <option key={b.id} value={b.id}>{b.code}</option>)}</select></Field>
+        <Field label="From"><select className="input" value={from} onChange={(e) => setFrom(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{godowns.map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en}</option>)}</select></Field>
+        <Field label="To"><select className="input" value={to} onChange={(e) => setTo(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{godowns.filter((b: any) => b.id !== from).map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en}</option>)}</select></Field>
         <Field label="Product"><select className="input" value={productId} onChange={(e) => setProduct(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{(products.data ?? []).map((p: any) => <option key={p.id} value={p.id}>{p.name_en}</option>)}</select></Field>
         <Field label="Bags"><input className="input num" value={n} onChange={(e) => setN(e.target.value.replace(/\D/g, ''))} /></Field>
         <Field label="Truck"><input className="input" value={truck} onChange={(e) => setTruck(e.target.value.toUpperCase())} /></Field>

@@ -7,6 +7,7 @@ import { audit } from '../lib/audit.js';
 import { forbidden, notFound, rule } from '../lib/errors.js';
 import { AmountOrZero, Amount, fromPaisa, toPaisa, formatPkr } from '../lib/money.js';
 import { ACC, accountId, firmId, postEntry, type PostingLine } from '../services/posting.js';
+import { createHash } from 'node:crypto';
 import { customerExposure } from './masters.js';
 import { recordMovement } from './stock.js';
 
@@ -15,13 +16,13 @@ const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const OgInput = z.object({
   businessDate: DateStr.optional(),
   customerId: z.number().int(),
+  /** Where the goods are collected from: an AKB store, a company warehouse/plant, a customer warehouse (amanat) or a trading dealer. */
   branchId: z.number().int(),
-  terms: z.enum(['cbd', 'credit', 'loan']),
-  advancePct: z.number().min(0).max(100).default(0),
+  /** Credit or cash (cash before delivery). */
+  terms: z.enum(['cbd', 'credit']),
   creditDays: z.number().int().min(0).max(365).optional(),
-  freightBy: z.enum(['customer', 'akb']).default('customer'),
-  freightPerBag: AmountOrZero.default('0.00'),
-  discount: AmountOrZero.default('0.00'),
+  /** Pohnch: AKB delivers. X: the customer collects. */
+  delivery: z.enum(['pohnch', 'x']).default('x'),
   note: z.string().max(500).nullish(),
   lines: z
     .array(z.object({ productId: z.number().int(), bags: z.number().int().positive(), rate: Amount }))
@@ -50,6 +51,12 @@ async function computeChecks(c: Db, o: OgInput, excludeOgId: string | null): Pro
   if (!customer || customer.kind !== 'customer') throw notFound('Customer');
   if (!customer.active) throw rule('This customer is inactive');
 
+  const loc = await maybeOne<{ kind: string; active: boolean; code: string }>(c, 'select kind, active, code from branches where id = $1', [o.branchId]);
+  if (!loc) throw notFound('Location');
+  if (!loc.active) throw rule(`Location ${loc.code} is inactive`);
+  // A trading source is another dealer's stock: AKB keeps no count of it.
+  const tracksStock = loc.kind !== 'dealer';
+
   let goods = 0n;
   let bags = 0;
   const reasons: string[] = [];
@@ -57,7 +64,7 @@ async function computeChecks(c: Db, o: OgInput, excludeOgId: string | null): Pro
   const wanted = new Map<number, number>();
   for (const l of o.lines) wanted.set(l.productId, (wanted.get(l.productId) ?? 0) + l.bags);
   const avail = new Map<number, number>();
-  for (const pid of wanted.keys()) {
+  for (const pid of tracksStock ? wanted.keys() : []) {
     const r = await one<{ available: string }>(
       c,
       `select (coalesce((select bags from stock_on_hand where product_id = $1 and branch_id = $2),0)
@@ -81,13 +88,12 @@ async function computeChecks(c: Db, o: OgInput, excludeOgId: string | null): Pro
     bags += l.bags;
     const below = p.floor_price !== null && toPaisa(l.rate) < toPaisa(p.floor_price);
     if (below) reasons.push(`${p.name_en} at Rs ${formatPkr(l.rate)} is below the floor price of Rs ${formatPkr(p.floor_price!)}`);
-    const a = Math.max(0, left.get(l.productId) ?? 0);
+    const a = tracksStock ? Math.max(0, left.get(l.productId) ?? 0) : l.bags;
     const unp = Math.max(0, l.bags - a);
     left.set(l.productId, (left.get(l.productId) ?? 0) - l.bags);
     lines.push({ productId: l.productId, bags: l.bags, rate: l.rate, floorPrice: p.floor_price, belowFloor: below, available: avail.get(l.productId) ?? 0, unpurchased: unp });
   }
-  const freight = o.freightBy === 'customer' ? toPaisa(o.freightPerBag) * BigInt(bags) : 0n;
-  const total = goods + freight - toPaisa(o.discount);
+  const total = goods;
   if (total <= 0n) throw rule('The OG total must be greater than zero');
 
   let credit: Checks['credit'] = null;
@@ -118,7 +124,8 @@ function addDays(date: string, days: number): string {
 
 const OG_LIST_SQL = `
   select o.id, o.og_no, o.business_date, o.status, o.terms, o.advance_pct, o.credit_days, o.due_date, o.unpurchased_bags,
-         o.approval_reasons, o.branch_id, b.code as branch_code, o.customer_id, p.name_en as customer_name, p.name_ur as customer_name_ur,
+         o.approval_reasons, o.branch_id, b.code as branch_code, b.name_en as location_name, b.kind as source_kind,
+         lp.name_en as location_party_name, case when o.freight_by = 'akb' then 'pohnch' else 'x' end as delivery, o.customer_id, p.name_en as customer_name, p.name_ur as customer_name_ur,
          p.city as customer_city, s.bags, s.dispatched_bags, s.total_value, s.paid, s.outstanding, s.fulfilment, s.payment,
          (select string_agg(distinct pr.name_en, ', ') from og_lines l join products pr on pr.id = l.product_id where l.og_id = o.id) as products,
          exists (select 1 from receipt_allocations a where a.og_id = o.id and a.reversed_at is not null) as has_returned_cheque,
@@ -126,6 +133,7 @@ const OG_LIST_SQL = `
     from ogs o
     join parties p on p.id = o.customer_id
     join branches b on b.id = o.branch_id
+    left join parties lp on lp.id = b.party_id
     join og_status s on s.og_id = o.id
     join users cu on cu.id = o.created_by`;
 
@@ -174,7 +182,7 @@ export async function salesRoutes(app: FastifyInstance) {
       const og = await maybeOne(
         c,
         `${OG_LIST_SQL.replace('cu.full_name as created_by_name', `cu.full_name as created_by_name, du.full_name as decided_by_name, o.decided_at, o.decision_comment,
-           o.freight_by, o.freight_per_bag, o.discount, o.note, o.submitted_at, rep.full_name as rep_name`)}
+           o.note, o.submitted_at, rep.full_name as rep_name`)}
            left join users du on du.id = o.decided_by
            left join users rep on rep.id = o.rep_user_id
           where o.id = $1`,
@@ -191,9 +199,11 @@ export async function salesRoutes(app: FastifyInstance) {
       );
       const dispatches = await many(
         c,
-        `select d.id, d.dispatch_no, d.business_date, d.truck_no, d.driver_name, d.bilty_no, d.gate_pass_no, d.freight_per_bag,
+        `select d.id, d.dispatch_no, d.business_date, d.truck_no, d.driver_name, d.driver_phone, d.vehicle_details, d.bilty_no,
+                d.gate_pass_no, d.freight_per_bag, d.delivery, d.freight_settlement, d.freight_value,
                 t.name_en as transporter_name, u.full_name as created_by_name, d.created_at,
                 d.goods_value + d.freight_value - d.discount_value as amount,
+                (select count(*) from dispatch_photos ph where ph.dispatch_id = d.id)::int as photos,
                 (select sum(bags) from dispatch_lines dl where dl.dispatch_id = d.id)::bigint as bags
            from dispatches d left join parties t on t.id = d.transporter_id join users u on u.id = d.created_by
           where d.og_id = $1 order by d.business_date, d.id`,
@@ -241,20 +251,21 @@ export async function salesRoutes(app: FastifyInstance) {
       [b.customerId]
     );
     const creditDays = b.terms === 'cbd' ? 0 : (b.creditDays ?? cust.credit_days);
+    const freightBy = b.delivery === 'pohnch' ? 'akb' : 'customer';
     let id = existingId;
     if (!id) {
       const r = await one<{ id: string }>(
         c,
         `insert into ogs(business_date, customer_id, branch_id, terms, advance_pct, credit_days, freight_by, freight_per_bag, discount, note, created_by, rep_user_id)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id`,
-        [date, b.customerId, b.branchId, b.terms, b.advancePct, creditDays, b.freightBy, b.freightPerBag, b.discount, b.note ?? null, userId, cust.rep_user_id]
+        [date, b.customerId, b.branchId, b.terms, 0, creditDays, freightBy, '0', '0', b.note ?? null, userId, cust.rep_user_id]
       );
       id = r.id;
     } else {
       await c.query(
         `update ogs set business_date=$2, customer_id=$3, branch_id=$4, terms=$5, advance_pct=$6, credit_days=$7, freight_by=$8,
                 freight_per_bag=$9, discount=$10, note=$11, rep_user_id=$12 where id=$1`,
-        [id, date, b.customerId, b.branchId, b.terms, b.advancePct, creditDays, b.freightBy, b.freightPerBag, b.discount, b.note ?? null, cust.rep_user_id]
+        [id, date, b.customerId, b.branchId, b.terms, 0, creditDays, freightBy, '0', '0', b.note ?? null, cust.rep_user_id]
       );
       await c.query('delete from og_lines where og_id = $1', [id]);
     }
@@ -367,35 +378,71 @@ export async function salesRoutes(app: FastifyInstance) {
     })
   );
 
+  const Photo = z.object({
+    mime: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+    data: z.string().min(100).max(4_300_000) // base64, about 3 MB
+  });
+
   const DispatchInput = z.object({
     businessDate: DateStr.optional(),
     truckNo: z.string().trim().min(3).max(30),
-    driverName: z.string().trim().max(100).nullish(),
+    vehicleDetails: z.string().trim().min(2, 'Enter the vehicle details (type, make or capacity)').max(200),
+    driverName: z.string().trim().min(2, "Enter the driver's name").max(100),
+    driverPhone: z.string().trim().regex(/^[0-9+\- ]{7,20}$/, "Enter the driver's phone number"),
+    driverCnic: z.string().trim().max(20).nullish(),
     biltyNo: z.string().trim().max(40).nullish(),
     gatePassNo: z.string().trim().min(1).max(40).optional(),
     transporterId: z.number().int().nullish(),
+    /** How this truck's freight is settled (see migration 010). */
+    freightSettlement: z.enum(['akb_cost', 'customer_paid', 'charged_to_customer', 'none']),
     freightPerBag: AmountOrZero.default('0.00'),
     loadingCharges: AmountOrZero.default('0.00'),
+    photos: z.array(Photo).min(1, 'Add at least one photo of the loading').max(3),
     lines: z.array(z.object({ ogLineId: z.number().int(), bags: z.number().int().positive() })).min(1)
   });
 
-  app.post('/ogs/:id/dispatches', { preHandler: requirePerm('dispatch.create') }, async (req) => {
+  /** Decode an uploaded photo and confirm the bytes really are the image type claimed. */
+  function decodePhoto(p: z.infer<typeof Photo>): Buffer {
+    const buf = Buffer.from(p.data, 'base64');
+    if (buf.length === 0 || buf.length > 3 * 1024 * 1024) throw rule('Each photo must be under 3 MB');
+    const jpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    const png = buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const webp = buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP';
+    const ok = (p.mime === 'image/jpeg' && jpeg) || (p.mime === 'image/png' && png) || (p.mime === 'image/webp' && webp);
+    if (!ok) throw rule('A photo is not a valid image');
+    return buf;
+  }
+
+  const OWN_STORES = ['godown', 'office', 'sale_point'];
+
+  app.post('/ogs/:id/dispatches', { preHandler: requirePerm('dispatch.create'), bodyLimit: 12 * 1024 * 1024 }, async (req) => {
     const { id } = z.object({ id: z.string().regex(/^\d+$/) }).parse(req.params);
     const b = DispatchInput.parse(req.body);
+    const photos = b.photos.map((p) => ({ mime: p.mime, bytes: decodePhoto(p) }));
     const date = b.businessDate ?? app.today();
     return app.mutate(req, 'dispatch.create', async (c) => {
       const og = await maybeOne<{
         status: string; terms: string; og_no: string; branch_id: number; customer_id: number; freight_by: string;
-        freight_per_bag: string; discount: string; customer_name: string;
+        customer_name: string; location_kind: string;
       }>(
         c,
-        `select o.status, o.terms, o.og_no, o.branch_id, o.customer_id, o.freight_by, o.freight_per_bag, o.discount, p.name_en as customer_name
-           from ogs o join parties p on p.id = o.customer_id where o.id = $1 for update of o`,
+        `select o.status, o.terms, o.og_no, o.branch_id, o.customer_id, o.freight_by, p.name_en as customer_name, b.kind as location_kind
+           from ogs o join parties p on p.id = o.customer_id join branches b on b.id = o.branch_id where o.id = $1 for update of o`,
         [id]
       );
       if (!og) throw notFound('OG');
       if (og.status !== 'approved') throw rule('Only approved OGs can be dispatched');
-      if (req.user!.branchIds && !req.user!.branchIds.includes(og.branch_id)) throw forbidden('You are not assigned to this branch');
+      // Branch assignments apply to AKB's own stores; company, amanat and trading pick-ups are open to the team.
+      if (OWN_STORES.includes(og.location_kind) && req.user!.branchIds && !req.user!.branchIds.includes(og.branch_id)) {
+        throw forbidden('You are not assigned to this branch');
+      }
+      const delivery = og.freight_by === 'akb' ? 'pohnch' : 'x';
+      const allowed = delivery === 'pohnch' ? ['akb_cost', 'customer_paid', 'charged_to_customer'] : ['none', 'charged_to_customer'];
+      if (!allowed.includes(b.freightSettlement)) {
+        throw rule(delivery === 'pohnch'
+          ? 'For Pohnch, choose whether AKB pays the freight, the customer paid it, or it is added to the customer\'s account'
+          : 'For X, the customer arranges transport; only choose "added to the customer\'s account" if AKB paid the freight');
+      }
       const st = await one<{ paid: string; total_value: string; bags: string; dispatched_bags: string }>(
         c,
         'select paid, total_value, bags, dispatched_bags from og_status where og_id = $1',
@@ -420,40 +467,56 @@ export async function salesRoutes(app: FastifyInstance) {
         goods += toPaisa(ol.rate) * BigInt(dl.bags);
         bagsNow += dl.bags;
       }
-      const totalBags = Number(st.bags);
-      const dispatchedBefore = Number(st.dispatched_bags);
-      const completes = dispatchedBefore + bagsNow === totalBags;
-      const freight = og.freight_by === 'customer' ? toPaisa(og.freight_per_bag) * BigInt(bagsNow) : 0n;
-      const discountTotal = toPaisa(og.discount);
-      let discount: bigint;
-      if (completes) {
-        const applied = await one<{ s: string }>(c, 'select coalesce(sum(discount_value),0) as s from dispatches where og_id = $1', [id]);
-        discount = discountTotal - toPaisa(applied.s);
-      } else {
-        discount = (discountTotal * BigInt(bagsNow)) / BigInt(totalBags);
-      }
-      const net = goods + freight - discount;
+
+      // Freight for this truck.
+      const freight = toPaisa(b.freightPerBag) * BigInt(bagsNow);
+      const loading = toPaisa(b.loadingCharges);
+      if (b.freightSettlement !== 'none' && b.freightSettlement !== 'akb_cost' && freight <= 0n) throw rule('Enter the freight per bag');
+      if (b.freightSettlement === 'none' && freight > 0n) throw rule('No freight is recorded when the customer collects and pays for transport');
+      const needsTransporter = (b.freightSettlement === 'akb_cost' && freight + loading > 0n) || b.freightSettlement === 'charged_to_customer';
+      if (needsTransporter && !b.transporterId) throw rule('Choose the transporter AKB pays or owes for this freight');
+      // What the customer owes for freight on this OG: added, credited (they paid the transporter for AKB), or nothing.
+      const customerFreight =
+        b.freightSettlement === 'charged_to_customer' ? freight : b.freightSettlement === 'customer_paid' ? -freight : 0n;
 
       const fid = await firmId(c, config.FIRM_CODE);
       const dispatchNo = (await one<{ n: string }>(c, "select next_doc_no('DSP', $1) as n", [date])).n;
       const gatePass = b.gatePassNo ?? (await one<{ n: string }>(c, "select next_doc_no('GP', $1) as n", [date])).n;
-      const transporterCost = toPaisa(b.freightPerBag) * BigInt(bagsNow) + toPaisa(b.loadingCharges);
+      const recv = await accountId(c, ACC.receivables);
+      const memo = `${og.og_no} · ${bagsNow} bags`;
       const entryLines: PostingLine[] = [
-        { accountId: await accountId(c, ACC.receivables), debit: fromPaisa(net), partyId: og.customer_id, branchId: og.branch_id, memo: `${og.og_no} · ${bagsNow} bags` },
-        { accountId: await accountId(c, ACC.sales), credit: fromPaisa(goods), branchId: og.branch_id },
-        ...(freight > 0n ? [{ accountId: await accountId(c, ACC.freightRecovered), credit: fromPaisa(freight), branchId: og.branch_id }] : []),
-        ...(discount > 0n ? [{ accountId: await accountId(c, ACC.discounts), debit: fromPaisa(discount), branchId: og.branch_id }] : [])
+        { accountId: recv, debit: fromPaisa(goods), partyId: og.customer_id, branchId: og.branch_id, memo },
+        { accountId: await accountId(c, ACC.sales), credit: fromPaisa(goods), branchId: og.branch_id }
       ];
-      if (b.transporterId && transporterCost > 0n) {
+      const fMemo = `Freight ${dispatchNo}`;
+      if (b.freightSettlement === 'akb_cost' && freight > 0n) {
         entryLines.push(
-          { accountId: await accountId(c, ACC.freightExpense), debit: fromPaisa(transporterCost), branchId: og.branch_id, memo: `Freight ${dispatchNo}` },
-          { accountId: await accountId(c, ACC.payables), credit: fromPaisa(transporterCost), partyId: b.transporterId, branchId: og.branch_id, memo: `Freight ${dispatchNo}` } 
+          { accountId: await accountId(c, ACC.freightExpense), debit: fromPaisa(freight), branchId: og.branch_id, memo: fMemo },
+          { accountId: await accountId(c, ACC.payables), credit: fromPaisa(freight), partyId: b.transporterId!, branchId: og.branch_id, memo: fMemo }
+        );
+      } else if (b.freightSettlement === 'customer_paid') {
+        // The customer paid the transporter on AKB's behalf: AKB's freight cost, and less for the customer to pay.
+        entryLines.push(
+          { accountId: await accountId(c, ACC.freightExpense), debit: fromPaisa(freight), branchId: og.branch_id, memo: `${fMemo} (paid by customer)` },
+          { accountId: recv, credit: fromPaisa(freight), partyId: og.customer_id, branchId: og.branch_id, memo: `${fMemo} paid by customer` }
+        );
+      } else if (b.freightSettlement === 'charged_to_customer') {
+        // AKB pays (owes) the transporter and the customer owes AKB for it.
+        entryLines.push(
+          { accountId: recv, debit: fromPaisa(freight), partyId: og.customer_id, branchId: og.branch_id, memo: `${fMemo} added to account` },
+          { accountId: await accountId(c, ACC.payables), credit: fromPaisa(freight), partyId: b.transporterId!, branchId: og.branch_id, memo: fMemo }
+        );
+      }
+      if (loading > 0n && b.transporterId) {
+        entryLines.push(
+          { accountId: await accountId(c, ACC.freightExpense), debit: fromPaisa(loading), branchId: og.branch_id, memo: `Loading ${dispatchNo}` },
+          { accountId: await accountId(c, ACC.payables), credit: fromPaisa(loading), partyId: b.transporterId, branchId: og.branch_id, memo: `Loading ${dispatchNo}` }
         );
       }
       const entry = await postEntry(c, {
         firmId: fid,
         businessDate: date,
-        narration: `Dispatch ${dispatchNo} against ${og.og_no} to ${og.customer_name}`,
+        narration: `Dispatch ${dispatchNo} against ${og.og_no} to ${og.customer_name} (${delivery === 'pohnch' ? 'Pohnch' : 'X'})`,
         sourceType: 'dispatch',
         sourceId: dispatchNo,
         createdBy: req.user!.id,
@@ -461,23 +524,52 @@ export async function salesRoutes(app: FastifyInstance) {
       });
       const d = await one<{ id: string }>(
         c,
-        `insert into dispatches(dispatch_no, og_id, business_date, branch_id, truck_no, driver_name, bilty_no, gate_pass_no, transporter_id,
-                                freight_per_bag, loading_charges, goods_value, freight_value, discount_value, journal_entry_id, created_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id`,
-        [dispatchNo, id, date, og.branch_id, b.truckNo, b.driverName ?? null, b.biltyNo ?? null, gatePass, b.transporterId ?? null,
-          b.freightPerBag, b.loadingCharges, fromPaisa(goods), fromPaisa(freight), fromPaisa(discount), entry.id, req.user!.id]
+        `insert into dispatches(dispatch_no, og_id, business_date, branch_id, truck_no, vehicle_details, driver_name, driver_phone, driver_cnic,
+                                bilty_no, gate_pass_no, transporter_id, delivery, freight_settlement, freight_per_bag, loading_charges,
+                                goods_value, freight_value, discount_value, journal_entry_id, created_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,0,$19,$20) returning id`,
+        [dispatchNo, id, date, og.branch_id, b.truckNo, b.vehicleDetails, b.driverName, b.driverPhone, b.driverCnic ?? null,
+          b.biltyNo ?? null, gatePass, b.transporterId ?? null, delivery, b.freightSettlement, b.freightPerBag, b.loadingCharges,
+          fromPaisa(goods), fromPaisa(customerFreight), entry.id, req.user!.id]
       );
+      for (const ph of photos) {
+        await c.query(
+          'insert into dispatch_photos(dispatch_id, mime, bytes, size, sha256, created_by) values ($1,$2,$3,$4,$5,$6)',
+          [d.id, ph.mime, ph.bytes, ph.bytes.length, createHash('sha256').update(ph.bytes).digest('hex'), req.user!.id]
+        );
+      }
       for (const dl of b.lines) {
         const ol = ogLines.find((x) => Number(x.id) === dl.ogLineId)!;
         await c.query('insert into dispatch_lines(dispatch_id, og_line_id, product_id, bags) values ($1,$2,$3,$4)', [d.id, dl.ogLineId, ol.product_id, dl.bags]);
-        await recordMovement(c, { date, kind: 'dispatch', productId: ol.product_id, branchId: og.branch_id, bags: -dl.bags, refType: 'dispatch', refId: dispatchNo, note: og.og_no, userId: req.user!.id });
+        // Trading pick-ups come from another dealer's stock, which AKB does not count.
+        if (og.location_kind !== 'dealer') {
+          await recordMovement(c, { date, kind: 'dispatch', productId: ol.product_id, branchId: og.branch_id, bags: -dl.bags, refType: 'dispatch', refId: dispatchNo, note: og.og_no, userId: req.user!.id });
+        }
       }
-      await audit(c, req.user!.id, 'dispatch', 'og', id, { dispatchNo, bags: bagsNow, truck: b.truckNo, gatePass, entryNo: entry.entryNo });
-      return { id: d.id, dispatchNo, gatePassNo: gatePass, entryNo: entry.entryNo, amount: fromPaisa(net) };
+      await audit(c, req.user!.id, 'dispatch', 'og', id, {
+        dispatchNo, bags: bagsNow, truck: b.truckNo, driver: b.driverName, gatePass, entryNo: entry.entryNo,
+        delivery, freightSettlement: b.freightSettlement, photos: photos.length
+      });
+      return { id: d.id, dispatchNo, gatePassNo: gatePass, entryNo: entry.entryNo, amount: fromPaisa(goods + customerFreight) };
     });
   });
 
-  app.get('/dispatches/:id', { preHandler: requirePerm('dispatch.create', 'og.read') }, async (req) => {
+  // Loading photos. The OG join applies row-level security (a sales rep sees only their own customers' photos).
+  app.get('/dispatches/:id/photos/:photoId', { preHandler: requirePerm('dispatch.create', 'og.read', 'og.read.own') }, async (req, reply) => {
+    const { id, photoId } = z.object({ id: z.coerce.number().int(), photoId: z.coerce.number().int() }).parse(req.params);
+    const ph = await app.read(req, (c) =>
+      maybeOne<{ mime: string; bytes: Buffer }>(
+        c,
+        `select p.mime, p.bytes from dispatch_photos p join dispatches d on d.id = p.dispatch_id join ogs o on o.id = d.og_id
+          where p.id = $1 and p.dispatch_id = $2`,
+        [photoId, id]
+      )
+    );
+    if (!ph) throw notFound('Photo');
+    return reply.header('content-type', ph.mime).header('cache-control', 'private, max-age=86400').send(ph.bytes);
+  });
+
+  app.get('/dispatches/:id', { preHandler: requirePerm('dispatch.create', 'og.read', 'og.read.own') }, async (req) => {
     const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
     return app.read(req, async (c) => {
       const d = await maybeOne(
@@ -485,7 +577,7 @@ export async function salesRoutes(app: FastifyInstance) {
         `select d.*, o.og_no, p.name_en as customer_name, p.name_ur as customer_name_ur, p.city as customer_city,
                 b.code as branch_code, b.name_en as branch_name, t.name_en as transporter_name, u.full_name as created_by_name
            from dispatches d join ogs o on o.id = d.og_id join parties p on p.id = o.customer_id
-           join branches b on b.id = d.branch_id left join parties t on t.id = d.transporter_id join users u on u.id = d.created_by
+           left join branches b on b.id = d.branch_id left join parties t on t.id = d.transporter_id join users u on u.id = d.created_by
           where d.id = $1`,
         [id]
       );
@@ -495,7 +587,8 @@ export async function salesRoutes(app: FastifyInstance) {
         `select dl.bags, pr.name_en, pr.name_ur, pr.bag_kg from dispatch_lines dl join products pr on pr.id = dl.product_id where dl.dispatch_id = $1`,
         [id]
       );
-      return { ...maskOg(d, can(req.user, 'money.read')), lines };
+      const photos = await many(c, 'select id, mime, size, created_at from dispatch_photos where dispatch_id = $1 order by id', [id]);
+      return { ...maskOg(d, can(req.user, 'money.read')), lines, photos };
     });
   });
 }

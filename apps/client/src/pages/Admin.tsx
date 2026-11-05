@@ -5,6 +5,7 @@ import { useSession } from '../lib/session';
 import { Confirm, Dialog, Empty, ErrorBox, Field, FormError, Loading, PageHead, Panel, Seg, useApi, useSubmitKey, useToast } from '../components/ui';
 import { uuid } from '../lib/uuid';
 import { useInfo } from '../lib/info';
+import { KIND_LABEL, NewLocationDialog } from '../components/masters';
 
 // ---------------- Users ----------------
 export function Users() {
@@ -157,17 +158,17 @@ function ResetForm({ user, onClose, onDone }: { user: any; onClose: () => void; 
 }
 
 // ---------------- Masters ----------------
-type Tab = 'products' | 'customer' | 'supplier' | 'transporter' | 'other';
+type Tab = 'products' | 'locations' | 'customer' | 'supplier' | 'transporter' | 'other';
 
 export function Masters() {
   const [tab, setTab] = useState<Tab>('products');
   return (
     <>
-      <PageHead kicker="Administration" title="Products & parties" sub="Every change is recorded in the audit log with the before and after values." />
+      <PageHead kicker="Administration" title="Products, locations & parties" sub="Codes are given by the system. Every change is recorded in the audit log with the before and after values." />
       <div style={{ marginBottom: 12 }}>
-        <Seg value={tab} options={[['products', 'Products'], ['customer', 'Customers'], ['supplier', 'Suppliers'], ['transporter', 'Transporters'], ['other', 'Others']]} onChange={setTab} />
+        <Seg value={tab} options={[['products', 'Products'], ['locations', 'Locations'], ['customer', 'Customers'], ['supplier', 'Suppliers'], ['transporter', 'Transporters'], ['other', 'Others']]} onChange={setTab} />
       </div>
-      {tab === 'products' ? <Products /> : <Parties kind={tab} />}
+      {tab === 'products' ? <Products /> : tab === 'locations' ? <Locations /> : <Parties kind={tab} />}
     </>
   );
 }
@@ -233,7 +234,70 @@ function ProductForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onS
   );
 }
 
-function Parties({ kind }: { kind: Exclude<Tab, 'products'> }) {
+function Locations() {
+  const list = useApi(() => api.get('/api/branches'), []);
+  const [add, setAdd] = useState<null | 'godown' | 'company_site' | 'amanat' | 'dealer'>(null);
+  const [edit, setEdit] = useState<any>(null);
+  const toast = useToast();
+  return (
+    <Panel title="Stock locations" pad={false} actions={
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        <button className="btn btn-sm" onClick={() => setAdd('godown')}>+ AKB store</button>
+        <button className="btn btn-sm" onClick={() => setAdd('company_site')}>+ Company warehouse</button>
+        <button className="btn btn-sm" onClick={() => setAdd('amanat')}>+ Amanat</button>
+        <button className="btn btn-sm" onClick={() => setAdd('dealer')}>+ Trading dealer</button>
+      </div>
+    }>
+      {list.loading && !list.data ? <Loading /> : list.error ? <ErrorBox error={list.error} /> : (
+        <div className="table-wrap">
+          <table className="t">
+            <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Party</th><th>City</th><th /></tr></thead>
+            <tbody>
+              {list.data.map((b: any) => (
+                <tr key={b.id} className={b.active ? '' : 'muted'}>
+                  <td>{b.code}</td><td>{b.name_en}</td><td className="small">{KIND_LABEL[b.kind] ?? b.kind}</td>
+                  <td className="small">{b.party_name ? `${b.party_code} · ${b.party_name}` : '—'}</td><td>{b.city ?? '—'}</td>
+                  <td><button className="btn btn-sm" onClick={() => setEdit(b)}>Edit</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {add && <NewLocationDialog kind={add} onClose={() => setAdd(null)} onCreated={(l) => { setAdd(null); toast(`${l.code} · ${l.name} added`); void list.reload(); }} />}
+      {edit && <LocationForm b={edit} onClose={() => setEdit(null)} onSaved={list.reload} />}
+    </Panel>
+  );
+}
+
+function LocationForm({ b, onClose, onSaved }: { b: any; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({ nameEn: b.name_en ?? '', nameUr: b.name_ur ?? '', city: b.city ?? '', active: b.active ?? true });
+  const [err, setErr] = useState<unknown>(null);
+  return (
+    <Dialog title={`Edit ${b.code}`} onClose={onClose}>
+      <div className="small muted">{KIND_LABEL[b.kind] ?? b.kind}{b.party_name ? ` · ${b.party_name}` : ''}</div>
+      <div className="form-grid">
+        <Field label="Name (English)"><input className="input" value={f.nameEn} onChange={(e) => setF({ ...f, nameEn: e.target.value })} /></Field>
+        <Field label="Name (Urdu)"><input className="input urdu" dir="rtl" value={f.nameUr} onChange={(e) => setF({ ...f, nameUr: e.target.value })} /></Field>
+        <Field label="City"><input className="input" value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} /></Field>
+        <Field label="Status"><select className="input" value={f.active ? 'y' : 'n'} onChange={(e) => setF({ ...f, active: e.target.value === 'y' })}><option value="y">Active</option><option value="n">Inactive</option></select></Field>
+      </div>
+      <FormError error={err} />
+      <div className="dialog-actions">
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={f.nameEn.trim().length < 2} onClick={async () => {
+          try {
+            await api.put(`/api/locations/${b.id}`, { nameEn: f.nameEn.trim(), nameUr: f.nameUr || null, city: f.city || null, active: f.active });
+            onSaved();
+            onClose();
+          } catch (e) { setErr(e); }
+        }}>Save</button>
+      </div>
+    </Dialog>
+  );
+}
+
+function Parties({ kind }: { kind: Exclude<Tab, 'products' | 'locations'> }) {
   const [q, setQ] = useState('');
   const list = useApi(() => api.get(`/api/parties${qs({ kind: kind === 'other' ? undefined : kind, q })}`), [kind, q]);
   const [edit, setEdit] = useState<any>(null);
@@ -264,10 +328,9 @@ function Parties({ kind }: { kind: Exclude<Tab, 'products'> }) {
 
 function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSaved: () => void }) {
   const key = useSubmitKey();
-  const reps = useApi(() => api.get('/api/users/reps'), []);
   const [f, setF] = useState({
-    code: p.code ?? '', kind: p.kind ?? 'customer', nameEn: p.name_en ?? '', nameUr: p.name_ur ?? '', city: p.city ?? '', phone: p.phone ?? '',
-    taxNo: p.tax_no ?? '', creditLimit: p.credit_limit ?? '0', creditDays: String(p.credit_days ?? 30), repUserId: p.rep_user_id ?? '', active: p.active ?? true
+    kind: p.kind ?? 'customer', nameEn: p.name_en ?? '', nameUr: p.name_ur ?? '', city: p.city ?? '', phone: p.phone ?? '',
+    taxNo: p.tax_no ?? '', creditLimit: p.credit_limit ?? '0', creditDays: String(p.credit_days ?? 30), active: p.active ?? true
   });
   const [err, setErr] = useState<unknown>(null);
   const s = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
@@ -275,9 +338,9 @@ function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSav
   return (
     <Dialog title={p.id ? `Edit ${p.name_en}` : 'Add party'} onClose={onClose}>
       <div className="form-grid">
-        <Field label="Code"><input className="input" value={f.code} onChange={s('code')} /></Field>
+        <Field label="Code" hint={p.id ? undefined : 'Given automatically when saved'}><input className="input" value={p.code ?? ''} readOnly disabled placeholder="Automatic" /></Field>
         <Field label="Kind">
-          <select className="input" value={f.kind} onChange={s('kind')}>
+          <select className="input" value={f.kind} onChange={s('kind')} disabled={!!p.id}>
             {['customer', 'supplier', 'transporter', 'tenant', 'employee', 'other'].map((k) => <option key={k} value={k}>{k}</option>)}
           </select>
         </Field>
@@ -288,12 +351,7 @@ function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSav
         <Field label="NTN / CNIC"><input className="input" value={f.taxNo} onChange={s('taxNo')} /></Field>
         {isCustomer && (
           <>
-            <Field label="Sales rep">
-              <select className="input" value={f.repUserId} onChange={(e) => setF({ ...f, repUserId: e.target.value ? Number(e.target.value) : '' })}>
-                <option value="">—</option>
-                {(reps.data ?? []).map((r: any) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
-              </select>
-            </Field>
+            {p.rep_name && <Field label="Sales rep" hint="The rep who added this customer"><input className="input" value={p.rep_name} readOnly disabled /></Field>}
             <Field label="Credit limit (Rs)" hint="0 means cash before delivery"><input className="input num" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: e.target.value.replace(/[^\d.]/g, '') })} /></Field>
             <Field label="Credit days"><input className="input num" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: e.target.value.replace(/\D/g, '') })} /></Field>
           </>
@@ -303,11 +361,11 @@ function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSav
       <FormError error={err} />
       <div className="dialog-actions">
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" disabled={!f.code || !f.nameEn} onClick={async () => {
+        <button className="btn btn-primary" disabled={!f.nameEn} onClick={async () => {
           try {
             const body = {
-              code: f.code, kind: f.kind, nameEn: f.nameEn, nameUr: f.nameUr || null, city: f.city || null, phone: f.phone || null, taxNo: f.taxNo || null,
-              creditLimit: isCustomer ? (f.creditLimit || '0') : '0', creditDays: Number(f.creditDays) || 0, repUserId: isCustomer && f.repUserId ? Number(f.repUserId) : null, active: f.active
+              kind: f.kind, nameEn: f.nameEn, nameUr: f.nameUr || null, city: f.city || null, phone: f.phone || null, taxNo: f.taxNo || null,
+              creditLimit: isCustomer ? (f.creditLimit || '0') : '0', creditDays: Number(f.creditDays) || 0, active: f.active
             };
             if (p.id) await api.put(`/api/parties/${p.id}`, body); else await api.post('/api/parties', body, key.key());
             key.renew();

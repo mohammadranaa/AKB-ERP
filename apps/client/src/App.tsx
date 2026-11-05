@@ -67,7 +67,7 @@ function useNav(): { group: string; items: NavItem[] }[] {
     { group: 'Finance', items: [{ to: '/finance', label: 'Guarantees & banks', perms: ['dashboard.read'] }] },
     { group: 'Administration', items: [
       { to: '/admin/users', label: 'Users', perms: ['users.manage'] },
-      { to: '/admin/masters', label: 'Products & parties', perms: ['masters.write'] },
+      { to: '/admin/masters', label: 'Products, locations & parties', perms: ['masters.write'] },
       { to: '/admin/audit', label: 'Audit log', perms: ['audit.read'] }
     ] }
   ];

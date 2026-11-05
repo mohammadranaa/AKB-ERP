@@ -4,7 +4,8 @@ import { api, qs } from '../lib/api';
 import { bags, d, dt, rs, tons } from '../lib/format';
 import { useSession } from '../lib/session';
 import { Confirm, Empty, ErrorBox, FulfilmentPill, Loading, PageHead, Panel, PaymentPill, Seg, useApi, useToast } from '../components/ui';
-import { DispatchForm } from './Dispatch';
+import { DELIVERY_LABEL, DispatchForm, DispatchPhotos, SETTLEMENT_LABEL } from './Dispatch';
+import { KIND_LABEL } from '../components/masters';
 
 const VIEWS: [string, string][] = [
   ['all', 'All'],
@@ -35,7 +36,7 @@ export function OgList() {
             <table className="t">
               <thead>
                 <tr>
-                  <th>OG</th><th>Customer</th><th>Branch</th><th>Products</th><th className="num">Bags</th>
+                  <th>OG</th><th>Customer</th><th>From · delivery</th><th>Products</th><th className="num">Bags</th>
                   {money && <th className="num">Value</th>}
                   <th className="num">Dispatched</th>{money && <th className="num">Paid</th>}<th>Due</th><th>Status</th><th>Flags</th>
                 </tr>
@@ -45,7 +46,7 @@ export function OgList() {
                   <tr key={o.id} className="click" onClick={() => nav(`/ogs/${o.id}`)}>
                     <td><strong>{o.og_no ?? 'Draft'}</strong><div className="small muted">{d(o.business_date)}</div></td>
                     <td>{o.customer_name}<div className="small muted">{o.customer_city}</div></td>
-                    <td>{o.branch_code}</td>
+                    <td>{o.branch_code}<div className="small muted">{o.delivery === 'pohnch' ? 'Pohnch' : 'X'}</div></td>
                     <td className="small">{o.products}</td>
                     <td className="num">{bags(o.bags)}<div className="small muted">{tons(o.bags)}</div></td>
                     {money && <td className="num">{rs(o.total_value)}</td>}
@@ -57,7 +58,7 @@ export function OgList() {
                       <div className="row" style={{ gap: 4 }}>
                         {o.status === 'submitted' && <span className="chip">Awaiting approval</span>}
                         {o.unpurchased_bags > 0 && o.fulfilment !== 'Dispatched' && <span className="chip chip-amber">Unpurchased {bags(o.unpurchased_bags)}</span>}
-                        {o.terms === 'cbd' && o.payment !== 'Paid' && o.status === 'approved' && <span className="chip chip-amber">Held · CBD unpaid</span>}
+                        {o.terms === 'cbd' && o.payment !== 'Paid' && o.status === 'approved' && <span className="chip chip-amber">Held · cash unpaid</span>}
                         {o.has_returned_cheque && <span className="chip chip-red">Cheque returned</span>}
                       </div>
                     </td>
@@ -81,6 +82,7 @@ export function OgDetail() {
   const { data: o, error, loading, reload } = useApi(() => api.get(`/api/ogs/${id}`), [id]);
   const [tab, setTab] = useState<'overview' | 'activity'>('overview');
   const [dialog, setDialog] = useState<null | 'approve' | 'reject' | 'cancel' | 'dispatch'>(null);
+  const [photosOf, setPhotosOf] = useState<any>(null);
   if (loading && !o) return <Loading />;
   if (error) return <ErrorBox error={error} onRetry={reload} />;
 
@@ -90,9 +92,9 @@ export function OgDetail() {
   const steps: { t: string; ref: string; who: string; st: string }[] = [
     { t: 'OG', ref: o.og_no ?? 'Draft', who: `${o.created_by_name} · ${dt(o.created_at)}`, st: o.status === 'draft' ? 'cur' : 'done' },
     { t: 'Approval', ref: o.status === 'submitted' ? 'Waiting' : o.status === 'rejected' ? 'Rejected' : o.status === 'draft' ? 'Not submitted' : 'Approved', who: o.decided_by_name ? `${o.decided_by_name} · ${dt(o.decided_at)}` : o.status === 'approved' ? 'Automatic (within limits)' : '', st: o.status === 'submitted' ? 'cur' : o.status === 'rejected' ? 'bad' : pre ? '' : 'done' },
-    { t: 'Stock', ref: o.unpurchased_bags > 0 ? `${bags(o.unpurchased_bags)} bags unpurchased` : 'In stock', who: o.branch_code, st: o.unpurchased_bags > 0 && o.fulfilment !== 'Dispatched' ? 'warn' : pre ? '' : 'done' },
-    { t: 'Dispatch', ref: `${bags(o.dispatched_bags)} / ${bags(o.bags)} bags`, who: o.dispatches.length ? `${o.dispatches.length} truck${o.dispatches.length > 1 ? 's' : ''}` : o.terms === 'cbd' && o.payment !== 'Paid' && !pre ? 'Held until paid (CBD)' : '', st: o.fulfilment === 'Dispatched' ? 'done' : o.fulfilment === 'Partly dispatched' ? 'cur' : o.terms === 'cbd' && !pre && o.payment !== 'Paid' ? 'warn' : '' },
-    { t: 'Payment', ref: money ? `${rs(o.paid)} of ${rs(o.total_value)}` : o.payment, who: o.terms === 'cbd' ? 'Cash before delivery' : `Due ${d(o.due_date)}`, st: o.payment === 'Paid' ? 'done' : o.payment === 'Overdue' ? 'bad' : o.payment === 'Partly paid' ? 'cur' : '' },
+    { t: 'Stock', ref: o.source_kind === 'dealer' ? 'Trading' : o.unpurchased_bags > 0 ? `${bags(o.unpurchased_bags)} bags unpurchased` : 'In stock', who: `${o.branch_code} · ${o.location_name}`, st: o.unpurchased_bags > 0 && o.fulfilment !== 'Dispatched' ? 'warn' : pre ? '' : 'done' },
+    { t: 'Dispatch', ref: `${bags(o.dispatched_bags)} / ${bags(o.bags)} bags`, who: o.dispatches.length ? `${o.dispatches.length} truck${o.dispatches.length > 1 ? 's' : ''}` : o.terms === 'cbd' && o.payment !== 'Paid' && !pre ? 'Held until paid (cash)' : '', st: o.fulfilment === 'Dispatched' ? 'done' : o.fulfilment === 'Partly dispatched' ? 'cur' : o.terms === 'cbd' && !pre && o.payment !== 'Paid' ? 'warn' : '' },
+    { t: 'Payment', ref: money ? `${rs(o.paid)} of ${rs(o.total_value)}` : o.payment, who: o.terms === 'cbd' ? 'Cash' : `Due ${d(o.due_date)}`, st: o.payment === 'Paid' ? 'done' : o.payment === 'Overdue' ? 'bad' : o.payment === 'Partly paid' ? 'cur' : '' },
     { t: 'Closed', ref: o.payment === 'Paid' && o.fulfilment === 'Dispatched' ? 'Complete' : 'Open', who: '', st: o.payment === 'Paid' && o.fulfilment === 'Dispatched' ? 'done' : '' }
   ];
 
@@ -155,8 +157,10 @@ export function OgDetail() {
             <Panel title="Order">
               <table className="t keep kv">
                 <tbody>
-                  <tr><td className="muted">Terms</td><td>{o.terms === 'cbd' ? 'Cash before delivery' : `${o.terms === 'loan' ? 'Loan' : 'Credit'} · ${o.advance_pct}% advance · ${o.credit_days} days`}</td></tr>
+                  <tr><td className="muted">Payment</td><td>{o.terms === 'cbd' ? 'Cash' : `${o.terms === 'loan' ? 'Loan' : 'Credit'} · ${o.credit_days} days`}{Number(o.advance_pct) > 0 && ` · ${o.advance_pct}% advance`}</td></tr>
                   <tr><td className="muted">Due</td><td>{o.terms === 'cbd' ? 'Before dispatch' : d(o.due_date)}</td></tr>
+                  <tr><td className="muted">Collect from</td><td>{o.location_name} <span className="muted small">· {o.branch_code} · {KIND_LABEL[o.source_kind] ?? o.source_kind}</span></td></tr>
+                  <tr><td className="muted">Delivery</td><td>{DELIVERY_LABEL[o.delivery] ?? '—'}</td></tr>
                   <tr><td className="muted">Created</td><td>{o.created_by_name} · {dt(o.created_at)}</td></tr>
                   <tr><td className="muted">Decision</td><td>{o.decided_by_name ? `${o.decided_by_name} · ${dt(o.decided_at)}` : '—'}{o.decision_comment && <div className="small muted">“{o.decision_comment}”</div>}</td></tr>
                   {o.rep_name && <tr><td className="muted">Sales rep</td><td>{o.rep_name}</td></tr>}
@@ -189,7 +193,9 @@ export function OgDetail() {
               </tbody>
               {money && (
                 <tfoot>
-                  {Number(o.freight_per_bag) > 0 && o.freight_by === 'customer' && <tr><td colSpan={4}>Freight charged to customer ({rs(o.freight_per_bag)}/bag)</td><td className="num">{rs(Number(o.freight_per_bag) * Number(o.bags))}</td></tr>}
+                  {o.dispatches.filter((x: any) => Number(x.freight_value) !== 0).map((x: any) => (
+                    <tr key={`f${x.id}`}><td colSpan={4}>{Number(x.freight_value) > 0 ? 'Freight added to the customer' : 'Freight paid by the customer'} ({x.dispatch_no})</td><td className="num">{Number(x.freight_value) > 0 ? '' : '−'}{rs(Math.abs(Number(x.freight_value)))}</td></tr>
+                  ))}
                   {Number(o.discount) > 0 && <tr><td colSpan={4}>Discount</td><td className="num">−{rs(o.discount)}</td></tr>}
                   <tr><td colSpan={4}>Total</td><td className="num">{rs(o.total_value)}</td></tr>
                 </tfoot>
@@ -199,13 +205,20 @@ export function OgDetail() {
           <Panel title={`Dispatches (${o.dispatches.length})`} pad={false}>
             {o.dispatches.length === 0 ? <Empty>Nothing dispatched yet.</Empty> : (
               <table className="t">
-                <thead><tr><th>Dispatch</th><th>Date</th><th>Truck</th><th>Bilty</th><th>Gate pass</th><th>Transporter</th><th className="num">Bags</th>{money && <th className="num">Amount</th>}<th /></tr></thead>
+                <thead><tr><th>Dispatch</th><th>Date</th><th>Vehicle</th><th>Driver</th><th>Freight</th><th>Gate pass</th><th className="num">Bags</th>{money && <th className="num">Amount</th>}<th /></tr></thead>
                 <tbody>
                   {o.dispatches.map((x: any) => (
                     <tr key={x.id}>
-                      <td>{x.dispatch_no}<div className="small muted">{x.created_by_name}</div></td><td>{d(x.business_date)}</td><td>{x.truck_no}</td><td>{x.bilty_no ?? '—'}</td><td>{x.gate_pass_no}</td>
-                      <td>{x.transporter_name ?? '—'}</td><td className="num">{bags(x.bags)}</td>{money && <td className="num">{rs(x.amount)}</td>}
-                      <td><Link to={`/dispatch/${x.id}/gate-pass`}>Gate pass</Link></td>
+                      <td>{x.dispatch_no}<div className="small muted">{x.created_by_name}</div></td><td>{d(x.business_date)}</td>
+                      <td>{x.truck_no}{x.vehicle_details && <div className="small muted">{x.vehicle_details}</div>}</td>
+                      <td>{x.driver_name ?? '—'}{x.driver_phone && <div className="small muted">{x.driver_phone}</div>}</td>
+                      <td className="small">{SETTLEMENT_LABEL[x.freight_settlement] ?? '—'}{x.transporter_name && <div className="muted">{x.transporter_name}{x.bilty_no ? ` · bilty ${x.bilty_no}` : ''}</div>}</td>
+                      <td>{x.gate_pass_no}</td>
+                      <td className="num">{bags(x.bags)}</td>{money && <td className="num">{rs(x.amount)}</td>}
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <Link to={`/dispatch/${x.id}/gate-pass`}>Gate pass</Link>
+                        {x.photos > 0 && <> · <button className="btn btn-ghost btn-sm" onClick={() => setPhotosOf(x)}>Photos ({x.photos})</button></>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -279,6 +292,7 @@ export function OgDetail() {
         />
       )}
       {dialog === 'dispatch' && <DispatchForm og={o} onClose={() => setDialog(null)} onDone={reload} />}
+      {photosOf && <DispatchPhotos dispatchId={photosOf.id} title={`Loading photos · ${photosOf.dispatch_no}`} onClose={() => setPhotosOf(null)} />}
     </>
   );
 }

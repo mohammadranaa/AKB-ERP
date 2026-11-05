@@ -3,11 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { bags, rs, tons } from '../lib/format';
 import { Confirm, Field, FormError, Loading, PageHead, Panel, Seg, useApi, useSubmitKey, useToast } from '../components/ui';
+import { NewCustomerDialog, NewLocationDialog, SOURCES, type SourceKind } from '../components/masters';
+import { useSession } from '../lib/session';
 
 interface Line { productId: number | ''; bags: string; rate: string }
 
 export function NewOg() {
   const nav = useNavigate();
+  const { can } = useSession();
   const toast = useToast();
   const submitKey = useSubmitKey();
   const customers = useApi(() => api.get('/api/parties?kind=customer&active=true'), []);
@@ -17,19 +20,21 @@ export function NewOg() {
   const [customerId, setCustomerId] = useState<number | ''>('');
   const [q, setQ] = useState('');
   const [branchId, setBranchId] = useState<number | ''>('');
-  const [terms, setTerms] = useState<'credit' | 'cbd' | 'loan'>('credit');
-  const [advancePct, setAdvancePct] = useState('0');
+  const [source, setSource] = useState<SourceKind>('store');
+  const [terms, setTerms] = useState<'credit' | 'cbd'>('credit');
   const [creditDays, setCreditDays] = useState('');
-  const [freightBy, setFreightBy] = useState<'customer' | 'akb'>('customer');
-  const [freight, setFreight] = useState('0');
-  const [discount, setDiscount] = useState('0');
+  const [delivery, setDelivery] = useState<'pohnch' | 'x'>('x');
+  const [addCustomer, setAddCustomer] = useState(false);
+  const [addLocation, setAddLocation] = useState(false);
   const [note, setNote] = useState('');
   const [lines, setLines] = useState<Line[]>([{ productId: '', bags: '', rate: '' }]);
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState<unknown>(null);
   const [confirm, setConfirm] = useState(false);
 
-  const godowns = (branches.data ?? []).filter((b: any) => b.kind === 'godown' && b.active);
+  const locations = (branches.data ?? []).filter((b: any) => b.active && (source === 'store' ? b.kind === 'godown' : b.kind === source));
+  const loc = (branches.data ?? []).find((b: any) => b.id === branchId);
+  const trading = loc?.kind === 'dealer';
   const cust = (customers.data ?? []).find((c: any) => c.id === customerId);
   const matches = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -42,16 +47,13 @@ export function NewOg() {
       customerId: customerId || undefined,
       branchId: branchId || undefined,
       terms,
-      advancePct: Number(advancePct) || 0,
-      creditDays: creditDays === '' ? undefined : Number(creditDays),
-      freightBy,
-      freightPerBag: freight || '0',
-      discount: discount || '0',
+      creditDays: terms === 'cbd' || creditDays === '' ? undefined : Number(creditDays),
+      delivery,
       note: note || undefined,
       lines: validLines.map((l) => ({ productId: Number(l.productId), bags: Number(l.bags), rate: l.rate }))
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [customerId, branchId, terms, advancePct, creditDays, freightBy, freight, discount, note, JSON.stringify(validLines)]
+    [customerId, branchId, terms, creditDays, delivery, note, JSON.stringify(validLines)]
   );
 
   // Live checks: credit limit, floor price and stock, recomputed by the server as the form changes.
@@ -66,7 +68,7 @@ export function NewOg() {
     return () => clearTimeout(t);
   }, [body, customerId, branchId]);
 
-  if (customers.loading || products.loading || branches.loading) return <Loading />;
+  if (!customers.data || !products.data || !branches.data) return <Loading />;
 
   const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const lineCheck = (i: number) => {
@@ -86,6 +88,32 @@ export function NewOg() {
   return (
     <>
       <PageHead kicker="Sales" title="New OG" sub="Checks for credit limit, floor price and stock run as you type." />
+      {addCustomer && (
+        <NewCustomerDialog
+          initialName={q.trim()}
+          onClose={() => setAddCustomer(false)}
+          onCreated={async (c) => {
+            setAddCustomer(false);
+            await customers.reload();
+            setCustomerId(c.id);
+            setQ('');
+            toast(`Customer ${c.code} added`);
+          }}
+        />
+      )}
+      {addLocation && source !== 'store' && (
+        <NewLocationDialog
+          kind={source}
+          defaultPartyId={source === 'amanat' && customerId ? customerId : undefined}
+          onClose={() => setAddLocation(false)}
+          onCreated={async (l) => {
+            setAddLocation(false);
+            await branches.reload();
+            setBranchId(l.id);
+            toast(`${l.code} · ${l.name} added`);
+          }}
+        />
+      )}
       <div className="stack" style={{ maxWidth: 1100 }}>
         <Panel title="Customer">
           {cust ? (
@@ -99,7 +127,11 @@ export function NewOg() {
             </div>
           ) : (
             <div className="stack">
-              <input className="input" placeholder="Search customer by name, city or code" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+              <div className="row">
+                <input className="input" placeholder="Search customer by name, city or code" value={q} onChange={(e) => setQ(e.target.value)} autoFocus style={{ flex: 1 }} />
+                {can('customer.create', 'masters.write') && <button className="btn" onClick={() => setAddCustomer(true)}>New customer</button>}
+              </div>
+              {q.trim() && !matches.length && <div className="small muted">No customer found.{can('customer.create', 'masters.write') ? ' Use “New customer” to add one.' : ''}</div>}
               <table className="t">
                 <tbody>
                   {matches.map((c: any) => (
@@ -122,14 +154,21 @@ export function NewOg() {
           )}
         </Panel>
 
-        <Panel title="Branch and products">
+        <Panel title="Collect from and products">
           <div className="stack">
-            <Field label="Dispatch from">
-              <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : '')} style={{ maxWidth: 320 }}>
-                <option value="">Choose branch…</option>
-                {godowns.map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en}</option>)}
-              </select>
-            </Field>
+            <div className="seg-grid"><Seg value={source} options={SOURCES} onChange={(v) => { setSource(v); setBranchId(''); }} /></div>
+            <div className="row" style={{ alignItems: 'flex-end' }}>
+              <Field label={source === 'store' ? 'AKB store' : source === 'company_site' ? 'Company warehouse / plant' : source === 'amanat' ? 'Customer warehouse' : 'Dealer'}>
+                <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : '')} style={{ minWidth: 260, maxWidth: 420 }}>
+                  <option value="">{locations.length ? 'Choose…' : 'None added yet'}</option>
+                  {locations.map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en}{b.city ? `, ${b.city}` : ''}</option>)}
+                </select>
+              </Field>
+              {source !== 'store' && can('locations.manage', 'masters.write') && <button className="btn" onClick={() => setAddLocation(true)}>{source === 'dealer' ? 'Add dealer' : 'Add location'}</button>}
+            </div>
+            {source === 'amanat' && <div className="small muted">AKB stock kept at a customer's warehouse. The count goes down when this OG is dispatched.</div>}
+            {source === 'company_site' && <div className="small muted">Stock AKB holds at the company's warehouse or plant.</div>}
+            {source === 'dealer' && <div className="small muted">Trading: the goods come from another dealer, so there is no stock check.</div>}
             <div className="table-wrap">
               <table className="t">
                 <thead><tr><th style={{ minWidth: 200 }}>Product</th><th className="num">Bags</th><th className="num">Rate / bag</th><th className="num">Amount</th><th>Checks</th><th /></tr></thead>
@@ -155,7 +194,7 @@ export function NewOg() {
                         <td><input className={`input num${ck?.belowFloor ? ' warn' : ''}`} inputMode="decimal" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value.replace(/[^\d.]/g, '') })} style={{ width: 120 }} /></td>
                         <td className="num">{Number(l.bags) && Number(l.rate) ? rs(Number(l.bags) * Number(l.rate)) : '—'}</td>
                         <td className="small">
-                          {ck && <div className="muted">Available {bags(ck.available)}</div>}
+                          {ck && !trading && <div className="muted">Available {bags(ck.available)}</div>}
                           {ck?.unpurchased > 0 && <span className="chip chip-amber">Unpurchased: {bags(ck.unpurchased)} bags not in stock</span>}
                           {ck?.belowFloor && <span className="chip chip-amber">Below floor</span>}
                         </td>
@@ -170,25 +209,25 @@ export function NewOg() {
           </div>
         </Panel>
 
-        <Panel title="Terms, freight and discount">
+        <Panel title="Payment and delivery">
           <div className="stack">
-            <Seg value={terms} options={[['credit', 'Credit'], ['cbd', 'Cash before delivery'], ['loan', 'Loan (to be defined)']]} onChange={setTerms} />
-            {terms === 'loan' && <div className="note note-amber small">Loan terms are waiting for the team's answer (question 34). For now they are treated like credit.</div>}
-            <div className="form-grid">
-              {terms !== 'cbd' && (
-                <>
-                  <Field label="Advance %"><input className="input num" value={advancePct} onChange={(e) => setAdvancePct(e.target.value.replace(/[^\d.]/g, ''))} /></Field>
-                  <Field label="Credit days" hint={cust ? `Customer default: ${cust.credit_days}` : undefined}><input className="input num" value={creditDays} placeholder={cust ? String(cust.credit_days) : ''} onChange={(e) => setCreditDays(e.target.value.replace(/\D/g, ''))} /></Field>
-                </>
-              )}
-              <Field label="Freight paid by">
-                <select className="input" value={freightBy} onChange={(e) => setFreightBy(e.target.value as 'customer' | 'akb')}>
-                  <option value="customer">Customer (added to the bill)</option>
-                  <option value="akb">AKB</option>
-                </select>
-              </Field>
-              {freightBy === 'customer' && <Field label="Freight per bag (Rs)"><input className="input num" value={freight} onChange={(e) => setFreight(e.target.value.replace(/[^\d.]/g, ''))} /></Field>}
-              <Field label="Discount (Rs, whole OG)"><input className="input num" value={discount} onChange={(e) => setDiscount(e.target.value.replace(/[^\d.]/g, ''))} /></Field>
+            <div className="field" style={{ alignItems: 'flex-start' }}><span>Payment</span>
+              <Seg value={terms} options={[['credit', 'Credit'], ['cbd', 'Cash']]} onChange={setTerms} />
+            </div>
+            {terms === 'credit' ? (
+              <div className="form-grid" style={{ maxWidth: 360 }}>
+                <Field label="Credit days" hint={cust ? `Customer default: ${cust.credit_days}` : '30, 60, 90 or 180'}>
+                  <input className="input num" inputMode="numeric" value={creditDays} placeholder={cust ? String(cust.credit_days) : ''} onChange={(e) => setCreditDays(e.target.value.replace(/\D/g, ''))} />
+                </Field>
+              </div>
+            ) : <div className="small muted">Cash: dispatch is held until the full amount is received.</div>}
+            <div className="field" style={{ alignItems: 'flex-start' }}><span>Delivery</span>
+              <Seg value={delivery} options={[['pohnch', 'Pohnch (AKB delivers)'], ['x', 'X (customer collects)']]} onChange={setDelivery} />
+            </div>
+            <div className="small muted">
+              {delivery === 'pohnch'
+                ? 'AKB arranges the vehicle. The freight cost is entered at dispatch, with the vehicle, driver and loading photos.'
+                : 'The customer arranges the vehicle. The vehicle, driver and loading photos are still recorded at dispatch; freight is not AKB\'s cost.'}
             </div>
             <Field label="Note (optional)"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
           </div>
@@ -216,7 +255,12 @@ export function NewOg() {
           body={preview.needsApproval
             ? `This OG for ${cust?.name_en} (${rs(preview.totalValue)}) goes to an approver. It cannot be dispatched until approved.`
             : `This OG for ${cust?.name_en} (${rs(preview.totalValue)}) is within limits and goes straight to the dispatch queue.`}
-          list={[...preview.reasons, ...(terms === 'cbd' ? ['Cash before delivery: dispatch is held until the full amount is received.'] : [])]}
+          list={[
+            ...preview.reasons,
+            `Collect from: ${loc ? `${loc.code} · ${loc.name_en}` : '—'}`,
+            delivery === 'pohnch' ? 'Pohnch: AKB delivers' : 'X: customer collects',
+            ...(terms === 'cbd' ? ['Cash: dispatch is held until the full amount is received.'] : [])
+          ]}
           confirmLabel={preview.needsApproval ? 'Submit for approval' : 'Submit OG'}
           onClose={() => setConfirm(false)}
           onConfirm={() => save(true)}

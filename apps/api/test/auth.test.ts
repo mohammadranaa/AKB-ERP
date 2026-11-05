@@ -105,7 +105,8 @@ describe('permissions', () => {
     const other = (await ownerQuery("select id from parties where code = 'C005'"))[0].id;
     expect((await s1('GET', `/api/parties/${other}`)).status).toBe(404);
     const list = await s1('GET', '/api/parties?kind=customer');
-    expect(list.body.map((p: { code: string }) => p.code).sort()).toEqual(['C001', 'C002', 'C003', 'C004']);
+    expect(list.body.map((p: { code: string }) => p.code).sort()).toEqual(expect.arrayContaining(['C001', 'C002', 'C003', 'C004']));
+    expect(list.body.map((p: { code: string }) => p.code).sort()).not.toContain('C005');
   });
 
   it('admin cannot post financial entries; auditor is read-only', async () => {

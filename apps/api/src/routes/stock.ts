@@ -20,8 +20,17 @@ async function move(
 }
 export { move as recordMovement };
 
-function assertBranch(user: { branchIds: number[] | null }, branchId: number) {
-  if (user.branchIds && !user.branchIds.includes(branchId)) throw forbidden('You are not assigned to this branch');
+/**
+ * Branch assignments limit a user to their own AKB stores. Company warehouses and customer warehouses
+ * (amanat) are open to the whole team. Trading dealers hold no AKB stock, so no stock moves there.
+ */
+async function assertBranch(c: Db, user: { branchIds: number[] | null }, branchId: number) {
+  const b = await maybeOne<{ kind: string; active: boolean; code: string }>(c, 'select kind, active, code from branches where id = $1', [branchId]);
+  if (!b) throw notFound('Location');
+  if (b.kind === 'dealer') throw rule(`${b.code} is a trading dealer: AKB keeps no stock there`);
+  if (['godown', 'office', 'sale_point'].includes(b.kind) && user.branchIds && !user.branchIds.includes(branchId)) {
+    throw forbidden('You are not assigned to this branch');
+  }
 }
 
 export async function stockRoutes(app: FastifyInstance) {
@@ -40,11 +49,18 @@ export async function stockRoutes(app: FastifyInstance) {
            from products p cross join branches b
            left join oh on oh.product_id = p.id and oh.branch_id = b.id
            left join cm on cm.product_id = p.id and cm.branch_id = b.id
-          where p.active and b.active and b.kind = 'godown'
+          where p.active and b.active and b.kind in ('godown','company_site','amanat')
           order by p.manufacturer, p.name_en, b.code`
       );
       const products = await many(c, 'select id, code, name_en, name_ur, manufacturer, bag_kg from products where active order by manufacturer, name_en');
-      const branches = await many(c, "select id, code, name_en, name_ur from branches where active and kind = 'godown' order by code");
+      // AKB's own godowns, stock held at company warehouses/plants, and AKB stock kept at customer warehouses (amanat).
+      const branches = await many(
+        c,
+        `select b.id, b.code, b.name_en, b.name_ur, b.kind, p.name_en as party_name
+           from branches b left join parties p on p.id = b.party_id
+          where b.active and b.kind in ('godown','company_site','amanat')
+          order by case b.kind when 'godown' then 1 when 'company_site' then 2 else 3 end, b.code`
+      );
       return { products, branches, cells };
     })
   );
@@ -86,9 +102,9 @@ export async function stockRoutes(app: FastifyInstance) {
 
   app.post('/goods-receipts', { preHandler: requirePerm('stock.receive') }, async (req) => {
     const b = GR.parse(req.body);
-    assertBranch(req.user!, b.branchId);
     const date = b.businessDate ?? app.today();
     return app.mutate(req, 'goods-receipts.create', async (c) => {
+      await assertBranch(c, req.user!, b.branchId);
       const gr = await one<{ id: string; gr_no: string }>(
         c,
         `insert into goods_receipts(gr_no, business_date, branch_id, supplier_id, company_order_ref, truck_no, note, created_by)
@@ -140,9 +156,12 @@ export async function stockRoutes(app: FastifyInstance) {
 
   app.post('/transfers', { preHandler: requirePerm('stock.transfer') }, async (req) => {
     const b = Transfer.parse(req.body);
-    assertBranch(req.user!, b.fromBranchId);
     const date = b.businessDate ?? app.today();
     return app.mutate(req, 'transfers.create', async (c) => {
+      await assertBranch(c, req.user!, b.fromBranchId);
+      const toLoc = await maybeOne<{ kind: string }>(c, 'select kind from branches where id = $1', [b.toBranchId]);
+      if (!toLoc) throw notFound('Location');
+      if (toLoc.kind === 'dealer') throw rule('Stock cannot be sent to a trading dealer');
       const t = await one<{ id: string; transfer_no: string }>(
         c,
         `insert into stock_transfers(transfer_no, business_date, from_branch_id, to_branch_id, truck_no, created_by)
@@ -169,7 +188,7 @@ export async function stockRoutes(app: FastifyInstance) {
         [id]
       );
       if (!t) throw notFound('Transfer');
-      assertBranch(req.user!, t.to_branch_id);
+      await assertBranch(c, req.user!, t.to_branch_id);
       if (t.status !== 'in_transit') throw rule('This transfer has already been received');
       const lines = await many<{ product_id: number; bags: number }>(c, 'select product_id, bags from stock_transfer_lines where transfer_id = $1', [id]);
       for (const l of lines) {
@@ -204,9 +223,9 @@ export async function stockRoutes(app: FastifyInstance) {
         reason: z.string().trim().min(5)
       })
       .parse(req.body);
-    assertBranch(req.user!, b.branchId);
     const date = b.businessDate ?? app.today();
     return app.mutate(req, 'adjustments.request', async (c) => {
+      await assertBranch(c, req.user!, b.branchId);
       const r = await one<{ id: string; adj_no: string }>(
         c,
         `insert into stock_adjustments(adj_no, business_date, branch_id, product_id, bags, reason, requested_by)

@@ -14,6 +14,7 @@ Everything for this setup is in `deploy/aws/`.
 | `backup-s3.sh`, `restore.sh` | Encrypted backups to S3 and restoring them |
 | `health.sh` | Checks every 5 minutes and emails when something is wrong |
 | `update.sh` | Installs a new version from GitHub |
+| `../office/pull-backup.ps1`, `../office/pull-backup.sh` | Weekly copy to AKB's office server (Windows or Linux): see `OFFICE_BACKUP_COPY.md` |
 
 ## What gets built
 
@@ -165,16 +166,18 @@ The check restores the latest nightly backup into a separate database, counts th
 | Encrypted database backup to S3 | 1st of each month, 23:45 | 13 months |
 | Backup before every update | each update | 30 days |
 | Snapshot of the whole server disk | every night at 00:00 | 14 days |
+| Copy to AKB's office server, collected by the office ([setup](OFFICE_BACKUP_COPY.md)) | weekly | 1 year, in the office |
 | Security updates (reboot if needed) | daily, reboot at 03:30 | — |
 | Health check, with an email when something is wrong and again when fixed | every 5 minutes | — |
 | Server moves to healthy hardware after an AWS fault, or reboots if it hangs | automatic | — |
 | Email when spending passes 80% of the budget | automatic | — |
 
-The health check covers four things:
+The health check watches for these:
 - the API stops answering
 - HTTPS stops answering
 - the certificate is not renewing
 - the disk is over 80% full, or there's been no nightly backup for 26 hours
+- the office server hasn't collected its weekly copy for 8 days
 
 ## Updating to a new version
 

@@ -5,6 +5,7 @@
 #   - the HTTPS certificate expires within 14 days (renewal failing)
 #   - the disk is more than 80% full
 #   - no successful nightly backup in the last 26 hours
+#   - the office server has not collected its weekly copy for 8 days (once it has started collecting)
 set -uo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
@@ -55,5 +56,16 @@ report disk "$disk_ok" "The server disk is ${used}% full. Enlarge the volume in 
 last="$STATE_DIR/last-backup-daily"
 if [ -f "$last" ] && [ $(($(date +%s) - $(cut -d' ' -f1 "$last"))) -lt 93600 ]; then backup_ok=yes; else backup_ok=no; fi
 report backup-missing "$backup_ok" "No successful nightly backup in the last 26 hours."
+
+# 5. Weekly copy at the office (checked once the office has collected its first copy)
+if [ -n "${BACKUP_BUCKET:-}" ] && command -v aws >/dev/null; then
+  collected=$(aws s3api head-object --region "$AWS_REGION" --bucket "$BACKUP_BUCKET" --key office-receipts/latest.txt \
+    --query LastModified --output text 2>/dev/null || true)
+  if [ -n "$collected" ] && [ "$collected" != "None" ]; then
+    age_days=$((($(date +%s) - $(date -d "$collected" +%s)) / 86400))
+    if [ "$age_days" -le 8 ]; then office_ok=yes; else office_ok=no; fi
+    report office-copy "$office_ok" "The office server has not collected its weekly backup copy for $age_days days. Check that it is switched on and online, and read pull-backup.log in its backup folder."
+  fi
+fi
 
 exit $((problems > 0))

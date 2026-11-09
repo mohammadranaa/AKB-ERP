@@ -10,7 +10,7 @@ Fertilizer distribution ERP for AKB Group (Pakistan). pnpm monorepo: `apps/api` 
 - Posted journal entries are immutable; corrections are reversals. Business rules live in the database (triggers in `003_ledger.sql`, `006_security.sql`); keep them there.
 - The API connects as `akb_app` (row-level security applies, fails closed), or on Neon/Vercel as the owner login with `DB_SET_ROLE=akb_app`. It refuses to start if queries would bypass RLS. Migrations run as the owner.
 - The Vercel trial (`docs/DEPLOY_VERCEL_TRIAL.md`) is for made-up data only (`TRIAL_MODE=true`). Never put real company data on it.
-- Real data lives only on AKB's own AWS server (owners' decision, Nov 2026; `docs/DEPLOY_AWS.md`, `deploy/aws/`). Keep its guarantees: only ports 80/443 open, no SSH port, no database port, backups encrypted with an age public key whose private key never goes on the server, the server role can add but not delete backups. Check AWS changes with `cfn-lint deploy/aws/akb-erp-stack.yaml` and `shellcheck -x deploy/aws/*.sh`.
+- Real data lives only on AKB's own AWS server (owners' decision, Nov 2026; `docs/DEPLOY_AWS.md`, `deploy/aws/`). Keep its guarantees: only ports 80/443 open, no SSH port, no database port, backups encrypted with an age public key whose private key never goes on the server, the server role can add but not delete backups, and the office copy is pulled by the office (`deploy/office/`, `docs/OFFICE_BACKUP_COPY.md`) with a login that can only read `daily/` and write `office-receipts/`. Check AWS changes with `cfn-lint deploy/aws/akb-erp-stack.yaml` and `shellcheck -x deploy/aws/*.sh deploy/office/*.sh`.
 - `REQUIRE_TOTP` must stay true in production; demo seed refuses production.
 
 ## Commands

@@ -13,6 +13,8 @@ Metadata:
         Parameters: [AllowedHttpsCidr]
       - Label: { default: Alerts and spending }
         Parameters: [AlertEmail, MonthlyBudgetUSD]
+      - Label: { default: Weekly copy to the office server }
+        Parameters: [OfficeIpCidr]
       - Label: { default: Rebuilding after a disaster only }
         Parameters: [ExistingBackupBucket]
 
@@ -48,7 +50,13 @@ Parameters:
     Default: 150
     MinValue: 0
     Description: Email when this month's AWS bill passes 80% of this amount. 0 = no budget alert.
-
+  OfficeIpCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    Description: >-
+      Where the office server collects its weekly backup copy from. Set to the office's fixed IP
+      (e.g. 203.0.113.10/32) so the office login works from the office only. 0.0.0.0/0 = anywhere.
   ExistingBackupBucket:
     Type: String
     Default: ''
@@ -215,6 +223,44 @@ Resources:
                 Effect: Allow
                 Action: sns:Publish
                 Resource: !Ref AlertTopic
+
+  # The office server's login for its weekly copy: it can read the nightly backups and record that
+  # it collected one, nothing else. It pulls from AWS, so nothing on AWS can reach into the office,
+  # and nothing on AWS can delete the office's copies. Its access key is made in the IAM console
+  # (docs/OFFICE_BACKUP_COPY.md), never in this template, so it never shows in the stack outputs.
+  OfficeBackupUser:
+    Type: AWS::IAM::User
+    Properties:
+      Policies:
+        - PolicyName: akb-erp-office-backup-copy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ListNightlyBackups
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Bucket}'
+                  - Bucket: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+                Condition:
+                  StringLike: { 's3:prefix': ['daily/*', 'daily/'] }
+                  IpAddress: { 'aws:SourceIp': !Ref OfficeIpCidr }
+              - Sid: ReadNightlyBackups
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Bucket}/daily/*'
+                  - Bucket: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+                Condition:
+                  IpAddress: { 'aws:SourceIp': !Ref OfficeIpCidr }
+              - Sid: RecordCollection
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Bucket}/office-receipts/*'
+                  - Bucket: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+                Condition:
+                  IpAddress: { 'aws:SourceIp': !Ref OfficeIpCidr }
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -391,6 +437,9 @@ Outputs:
     Value: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
   AlertTopicArn:
     Value: !Ref AlertTopic
+  OfficeBackupUser:
+    Description: Make an access key for this user in IAM for the office server's weekly copy (docs/OFFICE_BACKUP_COPY.md)
+    Value: !Ref OfficeBackupUser
   Connect:
     Description: Open a terminal on the server (AWS console > EC2 > Connect > Session Manager also works)
     Value: !Sub 'aws ssm start-session --region ${AWS::Region} --target ${Server}'

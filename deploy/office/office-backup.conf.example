@@ -1,0 +1,10 @@
+# Copy to office-backup.conf (same folder) and fill in. Nothing secret here.
+# BUCKET: the BackupBucket value from the AWS stack's Outputs tab.
+BUCKET=akb-erp-backupbucket-xxxxxxxxxxxx
+# REGION: the AWS region the server is in, e.g. ap-south-1 (Mumbai), me-south-1 (Bahrain), me-central-1 (UAE).
+REGION=ap-south-1
+# DEST: where the weekly copies are kept on this machine. Put it on a disk that is itself backed up or mirrored.
+DEST=/srv/akb-backups
+# How long to keep copies here (days), and how often to collect (days).
+KEEP_DAYS=365
+EVERY_DAYS=6

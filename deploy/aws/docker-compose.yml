@@ -1,0 +1,128 @@
+# AKB ERP on the AWS server (or any Linux server with a domain name).
+# Started by deploy/aws/install.sh; do not run it by hand without --env-file:
+#   docker compose -f deploy/aws/docker-compose.yml --env-file .env -p akb-erp up -d --build
+#
+# Differences from the laptop setup (../../docker-compose.yml):
+#  * Caddy in front: HTTPS with an automatic certificate, HTTP redirected to HTTPS.
+#  * Production mode: demo data refused, authenticator codes always required.
+#  * The database has no port at all outside Docker, and the database/API network has no internet access.
+name: akb-erp
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: 10m, max-file: "5" }
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: always
+    logging: *logging
+    shm_size: 512mb
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing in .env}
+      AKB_OWNER_PASSWORD: ${AKB_OWNER_PASSWORD:?missing in .env}
+      AKB_APP_PASSWORD: ${AKB_APP_PASSWORD:?missing in .env}
+      AKB_CREATE_TEST_DB: "false"
+      TZ: Asia/Karachi
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-4GB}
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=100
+      - -c
+      - wal_compression=on
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - log_min_duration_statement=2000
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ../../db/init:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d akb"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: always
+    logging: *logging
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "4000"
+      DATABASE_URL: postgres://akb_app:${AKB_APP_PASSWORD}@db:5432/akb
+      MIGRATION_DATABASE_URL: postgres://akb_owner:${AKB_OWNER_PASSWORD}@db:5432/akb
+      REQUIRE_TOTP: "true"
+      TRUST_PROXY: "true"
+      TIMEZONE: Asia/Karachi
+      CORS_ORIGINS: https://${DOMAIN:?missing in .env}
+      FIRM_CODE: ${FIRM_CODE:-AKB}
+      FIRM_NAME: ${FIRM_NAME:-AKB Group}
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/client/Dockerfile
+    restart: always
+    logging: *logging
+    depends_on: [api]
+    volumes:
+      - ./nginx-real-ip.conf:/etc/nginx/akb-extra/real-ip.conf:ro
+    networks: [backend, edge]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: always
+    logging: *logging
+    depends_on: [web]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?missing in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge:
+        ipv4_address: 10.89.0.10
+
+networks:
+  # Database and API: no route to the internet.
+  backend:
+    internal: true
+  # Caddy and the screens. Caddy needs the internet to obtain and renew the HTTPS certificate.
+  edge:
+    ipam:
+      config:
+        - subnet: 10.89.0.0/24
+          # Automatic addresses come from the upper half, so Caddy's fixed 10.89.0.10 is never handed out.
+          ip_range: 10.89.0.128/25
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

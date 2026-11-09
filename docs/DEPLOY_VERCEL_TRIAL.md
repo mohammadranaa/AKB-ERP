@@ -2,7 +2,7 @@
 
 A practice copy of AKB ERP that the AKB team can open from anywhere and enter **made-up** data into.
 It must never hold real company data: the client's rule is that real data stays on their own servers.
-When the trial ends, the real system is installed on the client's server (see `RUNNING_ON_A_MAC.md` and the Docker setup) and the trial is deleted.
+When the trial ends, the real system runs on AKB's AWS server (see `DEPLOY_AWS.md`), starting empty, and the trial is deleted.
 
 ## What runs where
 

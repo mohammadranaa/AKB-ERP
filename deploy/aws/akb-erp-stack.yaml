@@ -1,0 +1,396 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  AKB ERP production server: one EC2 server running the screens, API and PostgreSQL in Docker,
+  HTTPS only, no SSH port (Session Manager instead), encrypted backups to S3, daily disk snapshots,
+  automatic recovery and email alerts. Works in any region; choose the region when creating the stack.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Server }
+        Parameters: [InstanceType, DiskSizeGiB, UbuntuAmi]
+      - Label: { default: Access }
+        Parameters: [AllowedHttpsCidr]
+      - Label: { default: Alerts and spending }
+        Parameters: [AlertEmail, MonthlyBudgetUSD]
+      - Label: { default: Rebuilding after a disaster only }
+        Parameters: [ExistingBackupBucket]
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: m7i.large
+    AllowedValues: [t3.large, m7i.large, m7i.xlarge, r7i.large]
+    Description: m7i.large (2 cores, 8 GB) is enough for AKB. Move up to m7i.xlarge if it is ever slow.
+  DiskSizeGiB:
+    Type: Number
+    Default: 100
+    MinValue: 40
+    MaxValue: 2000
+    Description: Encrypted SSD for the system, database and photos. Can be enlarged later without downtime.
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Latest Ubuntu 24.04 LTS image, looked up automatically. Leave as it is.
+  AllowedHttpsCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    Description: >-
+      Who can open the system. 0.0.0.0/0 = anywhere (needed for sales reps on mobile data).
+      Set to the office's fixed IP (e.g. 203.0.113.10/32) to allow the office only.
+  AlertEmail:
+    Type: String
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    Description: Where alerts go (server down, backup failed, disk filling up, spending). Confirm the email AWS sends.
+  MonthlyBudgetUSD:
+    Type: Number
+    Default: 150
+    MinValue: 0
+    Description: Email when this month's AWS bill passes 80% of this amount. 0 = no budget alert.
+
+  ExistingBackupBucket:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+    Description: >-
+      Leave empty for a new installation. When rebuilding a lost server, enter the old stack's backup
+      bucket name (same region) so the new server can restore from it and keep backing up there.
+
+Conditions:
+  HasBudget: !Not [!Equals [!Ref MonthlyBudgetUSD, 0]]
+  NewBucket: !Equals [!Ref ExistingBackupBucket, '']
+
+Resources:
+  # --------------------------------------------------------------------------------------------
+  # Network: a private network with one public subnet. Only ports 80 (to redirect to HTTPS and
+  # obtain the certificate) and 443 are open. There is no SSH port and the database is never reachable.
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.20.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: akb-erp }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: akb-erp }]
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.20.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags: [{ Key: Name, Value: akb-erp-public }]
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: akb-erp }]
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRoute:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: AKB ERP - HTTPS in, nothing else
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref AllowedHttpsCidr, Description: HTTPS }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: Certificate checks and redirect to HTTPS }
+      Tags: [{ Key: Name, Value: akb-erp-web }]
+
+  # --------------------------------------------------------------------------------------------
+  # Backups: encrypted on the server before upload (the key to open them is never on the server).
+  # The server may add backups but can never delete them; old copies expire by these rules.
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Condition: NewBucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      LifecycleConfiguration:
+        Rules:
+          - { Id: frequent-7-days, Status: Enabled, Prefix: frequent/, ExpirationInDays: 7 }
+          - { Id: daily-35-days, Status: Enabled, Prefix: daily/, ExpirationInDays: 35 }
+          - { Id: monthly-13-months, Status: Enabled, Prefix: monthly/, ExpirationInDays: 400 }
+          - { Id: pre-update-30-days, Status: Enabled, Prefix: pre-update/, ExpirationInDays: 30 }
+          - Id: old-versions-and-uploads
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 30 }
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 2 }
+      Tags: [{ Key: Name, Value: akb-erp-backups }]
+
+  BackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: NewBucket
+    Properties:
+      Bucket: !Ref BackupBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: HttpsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt BackupBucket.Arn
+              - !Sub '${BackupBucket.Arn}/*'
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+
+  # --------------------------------------------------------------------------------------------
+  # Alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: AKB ERP alerts
+      Subscription:
+        - { Protocol: email, Endpoint: !Ref AlertEmail }
+
+  # --------------------------------------------------------------------------------------------
+  # The server's own permissions: Session Manager (instead of SSH), add backups, send alerts.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: akb-erp-server
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AddAndReadBackupsNeverDelete
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject]
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Bucket}/*'
+                  - Bucket: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+              - Sid: ListBackups
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${Bucket}'
+                  - Bucket: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+              - Sid: SendAlerts
+                Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertTopic
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  # --------------------------------------------------------------------------------------------
+  # The server
+  Server:
+    Type: AWS::EC2::Instance
+    DependsOn: GatewayAttachment
+    Properties:
+      ImageId: !Ref UbuntuAmi
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref WebSecurityGroup]
+      DisableApiTermination: true
+      PropagateTagsToVolumeOnCreation: true
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 1
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref DiskSizeGiB
+            Encrypted: true
+            DeleteOnTermination: false
+      Tags:
+        - { Key: Name, Value: akb-erp }
+        - { Key: Backup, Value: akb-erp }
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            # Prepares the server. The AKB ERP software itself is installed afterwards with deploy/aws/install.sh
+            # (see docs/DEPLOY_AWS.md), so no passwords are ever placed in this template.
+            set -euxo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            timedatectl set-timezone Asia/Karachi
+            apt-get update
+            apt-get -y upgrade
+            apt-get install -y docker.io docker-compose-v2 git age jq curl unattended-upgrades
+            snap install aws-cli --classic
+            systemctl enable --now docker
+            # Security updates install automatically; reboot (if one is needed) at 03:30 Pakistan time.
+            cat >/etc/apt/apt.conf.d/52akb-erp <<'EOF'
+            Unattended-Upgrade::Automatic-Reboot "true";
+            Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+            EOF
+            # 2 GB swap as a safety margin for builds.
+            if [ ! -f /swapfile ]; then
+              fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+              echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            fi
+            # Settings the install and backup scripts read. Nothing secret.
+            cat >/etc/akb-erp.conf <<'EOF'
+            AWS_REGION=${AWS::Region}
+            BACKUP_BUCKET=${Bucket}
+            ALERT_TOPIC_ARN=${AlertTopic}
+            EOF
+            chmod 644 /etc/akb-erp.conf
+          - Bucket: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+
+  ServerAddress:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Server
+      Tags: [{ Key: Name, Value: akb-erp }]
+
+  # --------------------------------------------------------------------------------------------
+  # Daily snapshot of the whole disk, kept 14 days (a second, independent copy besides the S3 backups).
+  SnapshotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: dlm.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole'
+
+  DailySnapshots:
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      Description: AKB ERP daily disk snapshots
+      State: ENABLED
+      ExecutionRoleArn: !GetAtt SnapshotRole.Arn
+      PolicyDetails:
+        ResourceTypes: [VOLUME]
+        TargetTags: [{ Key: Backup, Value: akb-erp }]
+        Schedules:
+          - Name: daily-14
+            CreateRule: { Interval: 24, IntervalUnit: HOURS, Times: ['19:00'] }  # 00:00 Pakistan time
+            RetainRule: { Count: 14 }
+            CopyTags: true
+
+  # --------------------------------------------------------------------------------------------
+  # If AWS hardware fails the server moves to healthy hardware by itself; if the server hangs it reboots.
+  RecoverAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: AKB ERP - AWS hardware problem, recovering the server automatically
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_System
+      Dimensions: [{ Name: InstanceId, Value: !Ref Server }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Sub 'arn:${AWS::Partition}:automate:${AWS::Region}:ec2:recover'
+        - !Ref AlertTopic
+
+  RebootAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: AKB ERP - server not responding, rebooting it
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_Instance
+      Dimensions: [{ Name: InstanceId, Value: !Ref Server }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Sub 'arn:${AWS::Partition}:automate:${AWS::Region}:ec2:reboot'
+        - !Ref AlertTopic
+
+  CpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: AKB ERP - processor above 85% for 15 minutes
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions: [{ Name: InstanceId, Value: !Ref Server }]
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions: [!Ref AlertTopic]
+
+  SpendingAlert:
+    Type: AWS::Budgets::Budget
+    Condition: HasBudget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'akb-erp-${AWS::Region}'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref MonthlyBudgetUSD, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  ServerIp:
+    Description: Point your domain's A record (e.g. erp.yourcompany.pk) at this address
+    Value: !Ref ServerAddress
+  InstanceId:
+    Value: !Ref Server
+  BackupBucket:
+    Value: !If [NewBucket, !Ref BackupBucket, !Ref ExistingBackupBucket]
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+  Connect:
+    Description: Open a terminal on the server (AWS console > EC2 > Connect > Session Manager also works)
+    Value: !Sub 'aws ssm start-session --region ${AWS::Region} --target ${Server}'

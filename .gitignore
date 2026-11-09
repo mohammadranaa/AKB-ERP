@@ -15,3 +15,7 @@ coverage/
 data/
 backups/
 .vercel/
+# Backup files and the backup decryption key
+*.dump
+*.age
+*.key

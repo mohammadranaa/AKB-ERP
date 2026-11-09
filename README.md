@@ -39,9 +39,13 @@ All use the password `Demo-Pass-2026`: `owner`, `accounts`, `accounts2`, `sales1
 
 ## Trial on Vercel (practice data only)
 
-See [docs/DEPLOY_VERCEL_TRIAL.md](docs/DEPLOY_VERCEL_TRIAL.md). Made-up data only; real data stays on the client's own server.
+See [docs/DEPLOY_VERCEL_TRIAL.md](docs/DEPLOY_VERCEL_TRIAL.md). Made-up data only; never real data.
 
-## Before real data goes in
+## The real system: AWS
+
+One server in AKB's AWS account, HTTPS, encrypted backups to S3, alerts. Step by step: [docs/DEPLOY_AWS.md](docs/DEPLOY_AWS.md). Files: `deploy/aws/`.
+
+## Before real data goes in (laptop or office server)
 
 1. Set `NODE_ENV=production` and `REQUIRE_TOTP=true` in `.env`.
 2. Start from an empty database (no demo data) and create the first administrator:

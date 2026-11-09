@@ -1,0 +1,23 @@
+# HTTPS front server for AKB ERP. The certificate is obtained and renewed automatically (Let's Encrypt).
+# DOMAIN and ACME_EMAIL come from the server's .env (see install.sh).
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# Dispatches carry up to three loading photos.
+	request_body {
+		max_size 12MB
+	}
+
+	# Caddy ignores any X-Forwarded-For sent by the browser and passes on the real client address,
+	# which the sign-in rate limit relies on.
+	reverse_proxy web:8080
+}

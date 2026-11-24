@@ -14,6 +14,7 @@ import { stockRoutes } from './routes/stock.js';
 import { salesRoutes } from './routes/sales.js';
 import { purchaseRoutes } from './routes/purchases.js';
 import { voucherRoutes } from './routes/vouchers.js';
+import { performanceRoutes } from './routes/performance.js';
 import { receiptRoutes } from './routes/receipts.js';
 import { dayRoutes } from './routes/days.js';
 import { dashboardRoutes } from './routes/dashboard.js';
@@ -144,6 +145,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(receiptRoutes, { prefix: '/api' });
   await app.register(voucherRoutes, { prefix: '/api' });
   await app.register(purchaseRoutes, { prefix: '/api/purchases' });
+  await app.register(performanceRoutes, { prefix: '/api/performance' });
   await app.register(dayRoutes, { prefix: '/api/days' });
   await app.register(dashboardRoutes, { prefix: '/api/dashboard' });
   await app.register(approvalRoutes, { prefix: '/api/approvals' });

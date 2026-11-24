@@ -26,6 +26,7 @@ import { Finance } from './pages/Finance';
 import { CompanyOrders, CompanyOrderDetail, DealerCodes } from './pages/Purchases';
 import { Vouchers, NewVoucherPage, VoucherDetail, OpeningVoucher } from './pages/Vouchers';
 import { ChartOfAccounts } from './pages/ChartOfAccounts';
+import { SalesTeam, RepPerformance, EmployeeActivity, EmployeeActivityDetail } from './pages/Team';
 
 interface NavItem { to: string; label: string; perms: string[]; badge?: number }
 
@@ -50,6 +51,10 @@ function useNav(): { group: string; items: NavItem[] }[] {
       { to: '/ogs', label: can('og.read') ? 'OGs' : 'My OGs', perms: ['og.read', 'og.read.own'] },
       { to: '/ogs/new', label: 'New OG', perms: ['og.create'] },
       { to: '/customers', label: can('og.read') ? 'Customers' : 'My customers', perms: ['money.read'] }
+    ] },
+    { group: 'Team', items: [
+      { to: '/team', label: can('team.read') ? 'Sales team' : 'My performance', perms: ['team.read', 'og.read.own'] },
+      { to: '/team/activity', label: 'Employee activity', perms: ['team.read'] }
     ] },
     { group: 'Distribution', items: [
       { to: '/dispatch', label: 'Dispatch queue', perms: ['dispatch.create'] },
@@ -280,6 +285,10 @@ export function App() {
           <Route path="/ledger/journals/:id" element={<Guard perms={['ledger.read']}><JournalDetail /></Guard>} />
           <Route path="/ledger/trial-balance" element={<Guard perms={['ledger.read']}><TrialBalance /></Guard>} />
           <Route path="/ledger/accounts/:id" element={<Guard perms={['ledger.read']}><AccountLedger /></Guard>} />
+          <Route path="/team" element={<Guard perms={['team.read', 'og.read.own']}><SalesTeam /></Guard>} />
+          <Route path="/team/reps/:id" element={<Guard perms={['team.read', 'og.read.own']}><RepPerformance /></Guard>} />
+          <Route path="/team/activity" element={<Guard perms={['team.read']}><EmployeeActivity /></Guard>} />
+          <Route path="/team/activity/:id" element={<Guard perms={['team.read']}><EmployeeActivityDetail /></Guard>} />
           <Route path="/purchases" element={<Guard perms={['purchase.read']}><CompanyOrders /></Guard>} />
           <Route path="/purchases/orders/:id" element={<Guard perms={['purchase.read']}><CompanyOrderDetail /></Guard>} />
           <Route path="/purchases/dealer-codes" element={<Guard perms={['purchase.read', 'masters.read']}><DealerCodes /></Guard>} />

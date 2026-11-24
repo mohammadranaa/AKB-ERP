@@ -175,6 +175,10 @@ function ReceiveForm({ onClose, onDone }: { onClose: () => void; onDone: () => v
   const branches = useApi(() => api.get('/api/branches'), []);
   const products = useApi(() => api.get('/api/products'), []);
   const suppliers = useApi(() => api.get('/api/parties?kind=supplier'), []);
+  const { can } = useSession();
+  const orders = useApi(() => (can('stock.receive') ? api.get('/api/purchases/open-for-receipt') : Promise.resolve([])), []);
+  const [orderId, setOrderId] = useState('');
+  const order = (orders.data ?? []).find((o: any) => String(o.id) === orderId);
   const [branchId, setBranch] = useState<number | ''>('');
   const [supplierId, setSupplier] = useState<number | ''>('');
   const [co, setCo] = useState('');
@@ -184,10 +188,26 @@ function ReceiveForm({ onClose, onDone }: { onClose: () => void; onDone: () => v
   const [busy, setBusy] = useState(false);
   return (
     <Dialog title="Receive goods" onClose={onClose} wide>
+      <Field label="Against company order" hint="Choose the order the bags came on; the company and product are then taken from it">
+        <select className="input" value={orderId} onChange={(e) => {
+          const o = (orders.data ?? []).find((x: any) => String(x.id) === e.target.value);
+          setOrderId(e.target.value);
+          if (o) {
+            setSupplier(o.supplier_id);
+            setBranch(o.location_id);
+            setLines([{ productId: o.product_id, bagsReceived: String(o.bags_left), bagsShort: '0', bagsDamaged: '0' }]);
+          }
+        }}>
+          <option value="">No order / not listed</option>
+          {(orders.data ?? []).map((o: any) => (
+            <option key={o.id} value={o.id}>{o.order_no}{o.company_order_no ? ` · CO ${o.company_order_no}` : ''} · {o.supplier_name} · {o.product_name} · {bags(o.bags_left)} bags to come</option>
+          ))}
+        </select>
+      </Field>
       <div className="form-grid">
         <Field label="Received at"><select className="input" value={branchId} onChange={(e) => setBranch(e.target.value ? Number(e.target.value) : '')}><option value="">Choose…</option>{(branches.data ?? []).filter((b: any) => b.active && STOCK_KINDS.includes(b.kind)).map((b: any) => <option key={b.id} value={b.id}>{b.code} · {b.name_en} ({KIND_LABEL[b.kind]})</option>)}</select></Field>
-        <Field label="Supplier"><select className="input" value={supplierId} onChange={(e) => setSupplier(e.target.value ? Number(e.target.value) : '')}><option value="">—</option>{(suppliers.data ?? []).map((s: any) => <option key={s.id} value={s.id}>{s.name_en}</option>)}</select></Field>
-        <Field label="Company order (CO) number"><input className="input" value={co} onChange={(e) => setCo(e.target.value)} /></Field>
+        <Field label="Supplier"><select className="input" value={supplierId} disabled={!!order} onChange={(e) => setSupplier(e.target.value ? Number(e.target.value) : '')}><option value="">—</option>{(suppliers.data ?? []).map((s: any) => <option key={s.id} value={s.id}>{s.name_en}</option>)}</select></Field>
+        {!order && <Field label="Company order (CO) number"><input className="input" value={co} onChange={(e) => setCo(e.target.value)} /></Field>}
         <Field label="Truck"><input className="input" value={truck} onChange={(e) => setTruck(e.target.value.toUpperCase())} /></Field>
       </div>
       <table className="t">
@@ -213,7 +233,7 @@ function ReceiveForm({ onClose, onDone }: { onClose: () => void; onDone: () => v
           setBusy(true);
           try {
             const r = await api.post('/api/stock/goods-receipts', {
-              branchId, supplierId: supplierId || null, companyOrderRef: co || null, truckNo: truck || null,
+              branchId, supplierId: supplierId || null, companyOrderId: order ? Number(order.id) : null, companyOrderRef: order ? null : co || null, truckNo: truck || null,
               lines: lines.map((l) => ({ productId: Number(l.productId), bagsReceived: Number(l.bagsReceived), bagsShort: Number(l.bagsShort) || 0, bagsDamaged: Number(l.bagsDamaged) || 0 }))
             }, key.key());
             key.renew();

@@ -7,7 +7,8 @@ import { Confirm, Empty, ErrorBox, Field, FormError, Loading, PageHead, Panel, u
 
 const SOURCE: Record<string, string> = {
   manual: 'Manual journal', receipt: 'Receipt', dispatch: 'Dispatch', reversal: 'Reversal', opening: 'Opening balance', import_opening: 'Opening balance', import_cashbook: 'Cash book import',
-  cheque_return_charges: 'Cheque return charges', freight: 'Freight'
+  cheque_return_charges: 'Cheque return charges', freight: 'Freight',
+  payment_voucher: 'Payment voucher', receipt_voucher: 'Receipt voucher', company_invoice: 'Company invoice'
 };
 const STATUS: Record<string, [string, string]> = {
   posted: ['Posted', 'chip-green'], pending_approval: ['Waiting for approval', 'chip-amber'], draft: ['Sent back', 'chip'], rejected: ['Rejected', 'chip-red']

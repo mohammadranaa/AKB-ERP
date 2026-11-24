@@ -68,6 +68,11 @@ end $$;
 insert into accounts(code, name, type, parent_id, postable)
   select '5050', 'Purchases', 'expense', id, true from accounts where code = '5000';
 
+-- 008 inserted Main cash in the same statement as its group, so its parent was not found; put it
+-- (and the import suspense account) where they belong in the tree.
+update accounts set parent_id = (select id from accounts where code = '1100') where code = '1101' and parent_id is null;
+update accounts set parent_id = (select id from accounts where code = '1000') where code = '9999' and parent_id is null;
+
 -- New accounts must sit under a group of the same type.
 create or replace function accounts_check() returns trigger language plpgsql as $$
 declare p record;

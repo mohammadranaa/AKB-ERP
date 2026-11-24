@@ -349,6 +349,8 @@ export async function mastersRoutes(app: FastifyInstance) {
       if (control === 'bank' && !b.bank) throw rule('Enter the bank name for a bank account');
       const code = b.code || (await suggestCode(c, parent.id));
       if (await maybeOne(c, 'select 1 from accounts where code = $1', [code])) throw rule(`Account code ${code} is already used`);
+      const same = await maybeOne<{ code: string }>(c, 'select code from accounts where parent_id = $1 and lower(name) = lower($2)', [parent.id, b.name]);
+      if (same) throw rule(`${same.code} ${b.name} already exists under ${parent.code}`);
       const r = await one<{ id: number }>(
         c,
         'insert into accounts(code, name, type, parent_id, postable, control) values ($1,$2,$3,$4,$5,$6) returning id',

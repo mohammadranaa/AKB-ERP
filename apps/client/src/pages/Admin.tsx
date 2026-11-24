@@ -158,7 +158,7 @@ function ResetForm({ user, onClose, onDone }: { user: any; onClose: () => void; 
 }
 
 // ---------------- Masters ----------------
-type Tab = 'products' | 'locations' | 'customer' | 'supplier' | 'transporter' | 'other';
+type Tab = 'products' | 'locations' | 'sale_points' | 'customer' | 'supplier' | 'transporter' | 'other';
 
 export function Masters() {
   const [tab, setTab] = useState<Tab>('products');
@@ -166,9 +166,9 @@ export function Masters() {
     <>
       <PageHead kicker="Administration" title="Products, locations & parties" sub="Codes are given by the system. Every change is recorded in the audit log with the before and after values." />
       <div style={{ marginBottom: 12 }}>
-        <Seg value={tab} options={[['products', 'Products'], ['locations', 'Locations'], ['customer', 'Customers'], ['supplier', 'Suppliers'], ['transporter', 'Transporters'], ['other', 'Others']]} onChange={setTab} />
+        <Seg value={tab} options={[['products', 'Products'], ['locations', 'Locations'], ['sale_points', 'Sale points'], ['customer', 'Customers'], ['supplier', 'Suppliers'], ['transporter', 'Transporters'], ['other', 'Others']]} onChange={setTab} />
       </div>
-      {tab === 'products' ? <Products /> : tab === 'locations' ? <Locations /> : <Parties kind={tab} />}
+      {tab === 'products' ? <Products /> : tab === 'locations' ? <Locations /> : tab === 'sale_points' ? <SalePoints /> : <Parties kind={tab} />}
     </>
   );
 }
@@ -297,7 +297,7 @@ function LocationForm({ b, onClose, onSaved }: { b: any; onClose: () => void; on
   );
 }
 
-function Parties({ kind }: { kind: Exclude<Tab, 'products' | 'locations'> }) {
+function Parties({ kind }: { kind: Exclude<Tab, 'products' | 'locations' | 'sale_points'> }) {
   const [q, setQ] = useState('');
   const list = useApi(() => api.get(`/api/parties${qs({ kind: kind === 'other' ? undefined : kind, q })}`), [kind, q]);
   const [edit, setEdit] = useState<any>(null);
@@ -308,12 +308,12 @@ function Parties({ kind }: { kind: Exclude<Tab, 'products' | 'locations'> }) {
       {list.loading && !list.data ? <Loading /> : list.error ? <ErrorBox error={list.error} /> : !rows.length ? <Empty>None yet.</Empty> : (
         <div className="table-wrap">
           <table className="t">
-            <thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>City</th><th>Phone</th>{kind === 'customer' && <><th>Rep</th><th className="num">Credit limit</th><th>Days</th></>}<th /></tr></thead>
+            <thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>City</th><th>Phone</th>{kind === 'customer' && <><th>Sale point</th><th>Rep</th><th className="num">Credit limit</th><th>Days</th></>}<th /></tr></thead>
             <tbody>
               {rows.map((p: any) => (
                 <tr key={p.id} className={p.active ? '' : 'muted'}>
                   <td>{p.code}</td><td>{p.name_en}{p.name_ur && <div className="urdu">{p.name_ur}</div>}</td><td className="small">{p.kind}</td><td>{p.city ?? '—'}</td><td className="small">{p.phone ?? '—'}</td>
-                  {kind === 'customer' && <><td className="small">{p.rep_name ?? '—'}</td><td className="num">{Number(p.credit_limit) > 0 ? rs(p.credit_limit) : 'Cash first'}</td><td>{p.credit_days}</td></>}
+                  {kind === 'customer' && <><td className="small">{p.sale_point_name ?? '—'}</td><td className="small">{p.rep_name ?? '—'}</td><td className="num">{Number(p.credit_limit) > 0 ? rs(p.credit_limit) : 'Cash first'}</td><td>{p.credit_days}</td></>}
                   <td><button className="btn btn-sm" onClick={() => setEdit(p)}>Edit</button></td>
                 </tr>
               ))}
@@ -330,8 +330,10 @@ function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSav
   const key = useSubmitKey();
   const [f, setF] = useState({
     kind: p.kind ?? 'customer', nameEn: p.name_en ?? '', nameUr: p.name_ur ?? '', city: p.city ?? '', phone: p.phone ?? '',
-    taxNo: p.tax_no ?? '', creditLimit: p.credit_limit ?? '0', creditDays: String(p.credit_days ?? 30), active: p.active ?? true
+    taxNo: p.tax_no ?? '', creditLimit: p.credit_limit ?? '0', creditDays: String(p.credit_days ?? 30), active: p.active ?? true,
+    salePointId: p.sale_point_id ? String(p.sale_point_id) : ''
   });
+  const salePoints = useApi(() => api.get('/api/sale-points'), []);
   const [err, setErr] = useState<unknown>(null);
   const s = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const isCustomer = f.kind === 'customer';
@@ -354,6 +356,12 @@ function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSav
             {p.rep_name && <Field label="Sales rep" hint="The rep who added this customer"><input className="input" value={p.rep_name} readOnly disabled /></Field>}
             <Field label="Credit limit (Rs)" hint="0 means cash before delivery"><input className="input num" value={f.creditLimit} onChange={(e) => setF({ ...f, creditLimit: e.target.value.replace(/[^\d.]/g, '') })} /></Field>
             <Field label="Credit days"><input className="input num" value={f.creditDays} onChange={(e) => setF({ ...f, creditDays: e.target.value.replace(/\D/g, '') })} /></Field>
+            <Field label="Sale point">
+              <select className="input" value={f.salePointId} onChange={s('salePointId')}>
+                <option value="">—</option>
+                {(salePoints.data ?? []).filter((x: any) => x.active || String(x.id) === f.salePointId).map((x: any) => <option key={x.id} value={x.id}>{x.code} · {x.name_en}{x.district ? ` (${x.district})` : ''}</option>)}
+              </select>
+            </Field>
           </>
         )}
         <Field label="Status"><select className="input" value={f.active ? 'y' : 'n'} onChange={(e) => setF({ ...f, active: e.target.value === 'y' })}><option value="y">Active</option><option value="n">Inactive</option></select></Field>
@@ -365,9 +373,82 @@ function PartyForm({ p, onClose, onSaved }: { p: any; onClose: () => void; onSav
           try {
             const body = {
               kind: f.kind, nameEn: f.nameEn, nameUr: f.nameUr || null, city: f.city || null, phone: f.phone || null, taxNo: f.taxNo || null,
-              creditLimit: isCustomer ? (f.creditLimit || '0') : '0', creditDays: Number(f.creditDays) || 0, active: f.active
+              creditLimit: isCustomer ? (f.creditLimit || '0') : '0', creditDays: Number(f.creditDays) || 0, active: f.active,
+              salePointId: isCustomer && f.salePointId ? Number(f.salePointId) : null
             };
             if (p.id) await api.put(`/api/parties/${p.id}`, body); else await api.post('/api/parties', body, key.key());
+            key.renew();
+            onSaved();
+            onClose();
+          } catch (e) { setErr(e); }
+        }}>Save</button>
+      </div>
+    </Dialog>
+  );
+}
+
+// ---------------- Sale points ----------------
+function SalePoints() {
+  const list = useApi(() => api.get('/api/sale-points'), []);
+  const [edit, setEdit] = useState<any>(null);
+  return (
+    <Panel title="Sale points" actions={<button className="btn btn-sm btn-primary" onClick={() => setEdit({})}>Add sale point</button>} pad={false}>
+      {list.loading && !list.data ? <Loading /> : list.error ? <ErrorBox error={list.error} /> : !list.data.length ? <Empty>None yet.</Empty> : (
+        <div className="table-wrap">
+          <table className="t">
+            <thead><tr><th>Code</th><th>Name</th><th>District</th><th>Tehsil</th><th>Sales rep</th><th className="num">Customers</th><th /></tr></thead>
+            <tbody>
+              {list.data.map((x: any) => (
+                <tr key={x.id} className={x.active ? '' : 'muted'}>
+                  <td>{x.code}</td><td>{x.name_en}{x.name_ur && <div className="urdu">{x.name_ur}</div>}</td><td>{x.district ?? '—'}</td><td>{x.tehsil ?? '—'}</td>
+                  <td className="small">{x.rep_name ?? '—'}</td><td className="num">{x.customers}</td>
+                  <td><button className="btn btn-sm" onClick={() => setEdit(x)}>Edit</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {edit && <SalePointForm sp={edit} onClose={() => setEdit(null)} onSaved={list.reload} />}
+    </Panel>
+  );
+}
+
+function SalePointForm({ sp, onClose, onSaved }: { sp: any; onClose: () => void; onSaved: () => void }) {
+  const key = useSubmitKey();
+  const reps = useApi(() => api.get('/api/users/reps'), []);
+  const [f, setF] = useState({
+    nameEn: sp.name_en ?? '', nameUr: sp.name_ur ?? '', district: sp.district ?? '', tehsil: sp.tehsil ?? '',
+    repUserId: sp.rep_user_id ? String(sp.rep_user_id) : '', active: sp.active ?? true
+  });
+  const [err, setErr] = useState<unknown>(null);
+  const s = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  return (
+    <Dialog title={sp.id ? `Edit ${sp.code}` : 'Add sale point'} onClose={onClose}>
+      <div className="form-grid">
+        <Field label="Code" hint={sp.id ? undefined : 'Given automatically when saved'}><input className="input" value={sp.code ?? ''} readOnly disabled placeholder="Automatic" /></Field>
+        <Field label="Name (English)"><input className="input" value={f.nameEn} onChange={s('nameEn')} /></Field>
+        <Field label="Name (Urdu)"><input className="input urdu" dir="rtl" value={f.nameUr} onChange={s('nameUr')} /></Field>
+        <Field label="District"><input className="input" value={f.district} onChange={s('district')} /></Field>
+        <Field label="Tehsil"><input className="input" value={f.tehsil} onChange={s('tehsil')} /></Field>
+        <Field label="Sales rep">
+          <select className="input" value={f.repUserId} onChange={s('repUserId')}>
+            <option value="">—</option>
+            {(reps.data ?? []).map((r: any) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
+          </select>
+        </Field>
+        <Field label="Status"><select className="input" value={f.active ? 'y' : 'n'} onChange={(e) => setF({ ...f, active: e.target.value === 'y' })}><option value="y">Active</option><option value="n">Inactive</option></select></Field>
+      </div>
+      <FormError error={err} />
+      <div className="dialog-actions">
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={!f.nameEn.trim()} onClick={async () => {
+          try {
+            const body = {
+              nameEn: f.nameEn.trim(), nameUr: f.nameUr || null, district: f.district || null, tehsil: f.tehsil || null,
+              repUserId: f.repUserId ? Number(f.repUserId) : null, active: f.active
+            };
+            if (sp.id) await api.put(`/api/sale-points/${sp.id}`, body); else await api.post('/api/sale-points', body, key.key());
             key.renew();
             onSaved();
             onClose();

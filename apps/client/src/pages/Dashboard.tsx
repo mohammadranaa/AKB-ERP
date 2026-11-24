@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { bags, d, rs, rsShort, tons } from '../lib/format';
+import { toP } from '../lib/money';
 import { useSession } from '../lib/session';
-import { ErrorBox, Loading, PageHead, Panel, useApi } from '../components/ui';
+import { ErrorBox, Kpi, Loading, PageHead, Panel, useApi } from '../components/ui';
 
 export function Dashboard() {
-  const { me } = useSession();
+  const { me, can } = useSession();
   const { data, error, loading, reload } = useApi(() => api.get('/api/dashboard'), []);
+  const payables = useApi(() => (can('purchase.read') ? api.get('/api/purchases/payables') : Promise.resolve(null)), []);
   if (loading && !data) return <Loading />;
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   const x = data!;
@@ -38,6 +40,14 @@ export function Dashboard() {
           <div className="sub">No estimate is shown. Comes with the finance and procurement modules.</div>
         </div>
       </div>
+
+      {payables.data && (
+        <div className="grid4" style={{ marginBottom: 20 }}>
+          <Kpi label="Owed to companies" value={rsShort(payables.data.totals.balance)} sub="trade payables, net of advances" to="/purchases" />
+          <Kpi label="Company invoices overdue" value={rsShort(payables.data.totals.overdue)} sub="past the due date" warn={toP(payables.data.totals.overdue) > 0n} to="/purchases" />
+          <Kpi label="Due to companies in 7 days" value={rsShort(payables.data.totals.due7d)} sub="plan the payments" to="/purchases" />
+        </div>
+      )}
 
       <div className="grid2" style={{ marginBottom: 20 }}>
         <Panel title="Bags dispatched · last 30 days">
@@ -104,15 +114,4 @@ export function Dashboard() {
       </Panel>
     </>
   );
-}
-
-function Kpi({ label, value, sub, warn, to }: { label: string; value: string; sub?: string; warn?: boolean; to?: string }) {
-  const body = (
-    <>
-      <div className="label">{label}</div>
-      <div className="value" style={warn ? { color: 'var(--amber-tx)' } : undefined}>{value}</div>
-      {sub && <div className="sub">{sub}</div>}
-    </>
-  );
-  return to ? <Link to={to} className="kpi" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{body}</Link> : <div className="kpi">{body}</div>;
 }

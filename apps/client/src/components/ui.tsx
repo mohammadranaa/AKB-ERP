@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { uuid } from '../lib/uuid';
 
@@ -213,4 +214,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="muted" style={{ padding: '18px 4px' }}>{children}</div>;
+}
+
+export function Kpi({ label, value, sub, warn, to }: { label: string; value: string; sub?: string; warn?: boolean; to?: string }) {
+  const body = (
+    <>
+      <div className="label">{label}</div>
+      <div className="value" style={warn ? { color: 'var(--amber-tx)' } : undefined}>{value}</div>
+      {sub && <div className="sub">{sub}</div>}
+    </>
+  );
+  return to ? <Link to={to} className="kpi" style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{body}</Link> : <div className="kpi">{body}</div>;
 }

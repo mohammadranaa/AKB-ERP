@@ -23,6 +23,9 @@ import { Journals, JournalDetail, NewJournal, TrialBalance, AccountLedger } from
 import { DayClose } from './pages/DayClose';
 import { Users, AuditLog, Masters } from './pages/Admin';
 import { Finance } from './pages/Finance';
+import { CompanyOrders, CompanyOrderDetail, DealerCodes } from './pages/Purchases';
+import { Vouchers, NewVoucherPage, VoucherDetail, OpeningVoucher } from './pages/Vouchers';
+import { ChartOfAccounts } from './pages/ChartOfAccounts';
 
 interface NavItem { to: string; label: string; perms: string[]; badge?: number }
 
@@ -54,14 +57,21 @@ function useNav(): { group: string; items: NavItem[] }[] {
       { to: '/stock/receipts', label: 'Goods receipts', perms: ['stock.receive'] },
       { to: '/stock/transfers', label: 'Transfers', perms: ['stock.transfer'] }
     ] },
+    { group: 'Purchases', items: [
+      { to: '/purchases', label: 'Company orders', perms: ['purchase.read'] },
+      { to: '/purchases/dealer-codes', label: 'Dealer codes', perms: ['purchase.read'] }
+    ] },
     { group: 'Accounts', items: [
-      { to: '/receipts', label: 'Receipts', perms: ['receipt.read'] },
+      { to: '/receipts', label: 'Customer receipts', perms: ['receipt.read'] },
       { to: '/receipts/new', label: 'New receipt', perms: ['receipt.create'] },
+      { to: '/vouchers', label: 'Payment & receipt vouchers', perms: ['voucher.create', 'ledger.read'] },
+      { to: '/vouchers/new', label: 'New payment', perms: ['voucher.create'] },
       { to: '/days', label: 'Day close', perms: ['day.close'] }
     ] },
     { group: 'Ledger', items: [
       { to: '/ledger/journals', label: 'Journals', perms: ['ledger.read'] },
       { to: '/ledger/trial-balance', label: 'Trial balance', perms: ['ledger.read'] },
+      { to: '/ledger/accounts', label: 'Chart of accounts', perms: ['ledger.read', 'accounts.manage'] },
       { to: '/ledger/journals/new', label: 'New journal', perms: ['journal.create'] }
     ] },
     { group: 'Finance', items: [{ to: '/finance', label: 'Guarantees & banks', perms: ['dashboard.read'] }] },
@@ -270,6 +280,14 @@ export function App() {
           <Route path="/ledger/journals/:id" element={<Guard perms={['ledger.read']}><JournalDetail /></Guard>} />
           <Route path="/ledger/trial-balance" element={<Guard perms={['ledger.read']}><TrialBalance /></Guard>} />
           <Route path="/ledger/accounts/:id" element={<Guard perms={['ledger.read']}><AccountLedger /></Guard>} />
+          <Route path="/purchases" element={<Guard perms={['purchase.read']}><CompanyOrders /></Guard>} />
+          <Route path="/purchases/orders/:id" element={<Guard perms={['purchase.read']}><CompanyOrderDetail /></Guard>} />
+          <Route path="/purchases/dealer-codes" element={<Guard perms={['purchase.read', 'masters.read']}><DealerCodes /></Guard>} />
+          <Route path="/vouchers" element={<Guard perms={['voucher.create', 'ledger.read']}><Vouchers /></Guard>} />
+          <Route path="/vouchers/new" element={<Guard perms={['voucher.create']}><NewVoucherPage /></Guard>} />
+          <Route path="/vouchers/opening" element={<Guard perms={['opening.create']}><OpeningVoucher /></Guard>} />
+          <Route path="/vouchers/:id" element={<Guard perms={['voucher.create', 'ledger.read']}><VoucherDetail /></Guard>} />
+          <Route path="/ledger/accounts" element={<Guard perms={['ledger.read', 'accounts.manage']}><ChartOfAccounts /></Guard>} />
           <Route path="/days" element={<Guard perms={['day.close', 'ledger.read']}><DayClose /></Guard>} />
           <Route path="/finance" element={<Finance />} />
           <Route path="/admin/users" element={<Guard perms={['users.manage']}><Users /></Guard>} />

@@ -85,6 +85,7 @@ export async function accountId(c: Db, code: string): Promise<number> {
 export const ACC = {
   receivables: '1300',
   payables: '2100',
+  purchases: '5050',
   sales: '4100',
   freightRecovered: '4200',
   freightExpense: '5200',

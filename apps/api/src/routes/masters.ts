@@ -5,7 +5,7 @@ import { many, maybeOne, one } from '../db.js';
 import { audit } from '../lib/audit.js';
 import { forbidden, notFound, rule } from '../lib/errors.js';
 import { firmId } from '../services/posting.js';
-import { AmountOrZero } from '../lib/money.js';
+import { AmountOrZero, toPaisa } from '../lib/money.js';
 
 const PartyKind = z.enum(['customer', 'supplier', 'transporter', 'tenant', 'employee', 'other']);
 
@@ -21,8 +21,69 @@ const PartyInput = z.object({
   filer: z.boolean().nullish(),
   creditLimit: AmountOrZero.default('0.00'),
   creditDays: z.number().int().min(0).max(365).default(30),
+  salePointId: z.number().int().nullish(),
   active: z.boolean().default(true)
 });
+
+const SalePointInput = z.object({
+  code: z.string().trim().max(20).nullish(),
+  nameEn: z.string().trim().min(1).max(120),
+  nameUr: z.string().trim().max(120).nullish(),
+  district: z.string().trim().max(60).nullish(),
+  tehsil: z.string().trim().max(60).nullish(),
+  repUserId: z.number().int().nullish(),
+  active: z.boolean().default(true)
+});
+
+const BankDetails = z.object({
+  bankName: z.string().trim().min(1).max(100),
+  branchName: z.string().trim().max(100).nullish(),
+  accountTitle: z.string().trim().max(150).nullish(),
+  accountNo: z.string().trim().max(40).nullish()
+});
+
+const AccountInput = z.object({
+  code: z.string().trim().toUpperCase().max(20).nullish(),
+  name: z.string().trim().min(2).max(150),
+  parentId: z.number().int(),
+  /** false = a group (heading) that other accounts sit under. */
+  postable: z.boolean().default(true),
+  control: z.enum(['cash', 'bank']).nullish(),
+  bank: BankDetails.nullish()
+});
+
+const AccountUpdate = z.object({
+  name: z.string().trim().min(2).max(150),
+  active: z.boolean(),
+  bank: BankDetails.nullish()
+});
+
+/** Suggest the next free code under a group: 1200 -> 1201, 1206; 1000 -> 1900; 1101 -> 110101. */
+async function suggestCode(c: import('../db.js').Db, parentId: number): Promise<string> {
+  const parent = await one<{ code: string }>(c, 'select code from accounts where id = $1', [parentId]);
+  const kids = await many<{ code: string }>(c, "select code from accounts where parent_id = $1 and code ~ '^[0-9]+$'", [parentId]);
+  const taken = async (code: string) => !!(await maybeOne(c, 'select 1 from accounts where code = $1', [code]));
+  let next: bigint;
+  let step: bigint;
+  if (kids.length) {
+    const nums = kids.map((k) => BigInt(k.code));
+    step = nums.some((n) => n % 10n !== 0n) ? 1n : nums.some((n) => n % 100n !== 0n) ? 10n : 100n;
+    next = nums.reduce((a, b) => (b > a ? b : a)) + step;
+  } else if (/^[0-9]+$/.test(parent.code)) {
+    const zeros = parent.code.length - parent.code.replace(/0+$/, '').length;
+    if (zeros > 0) {
+      step = 10n ** BigInt(zeros - 1);
+      next = BigInt(parent.code) + step;
+    } else {
+      step = 1n;
+      next = BigInt(parent.code + '01');
+    }
+  } else {
+    return `${parent.code}-01`;
+  }
+  for (let i = 0; i < 200 && (await taken(next.toString())); i++) next += step;
+  return next.toString();
+}
 
 const ProductInput = z.object({
   code: z.string().trim().min(1).max(30),
@@ -46,11 +107,12 @@ export async function mastersRoutes(app: FastifyInstance) {
       const rows = await many(
         c,
         `select p.id, p.code, p.kind, p.name_en, p.name_ur, p.city, p.phone, p.credit_limit, p.credit_days,
-                p.rep_user_id, u.full_name as rep_name, p.active,
+                p.rep_user_id, u.full_name as rep_name, p.active, p.sale_point_id, sp.code as sale_point_code, sp.name_en as sale_point_name,
                 coalesce(r.balance, 0) as balance,
                 (select max(o.business_date) from ogs o where o.customer_id = p.id and o.status = 'approved') as last_order_date
            from parties p
            left join users u on u.id = p.rep_user_id
+           left join sale_points sp on sp.id = p.sale_point_id
            left join party_receivables r on r.party_id = p.id
           where ($1::text is null or p.kind = $1)
             and ($2::text is null or lower(p.name_en) like '%' || lower($2) || '%' or lower(p.code) like lower($2) || '%' or p.name_ur like '%' || $2 || '%')
@@ -69,8 +131,8 @@ export async function mastersRoutes(app: FastifyInstance) {
     return app.read(req, async (c) => {
       const p = await maybeOne(
         c,
-        `select p.*, u.full_name as rep_name, coalesce(r.balance,0) as balance
-           from parties p left join users u on u.id = p.rep_user_id
+        `select p.*, u.full_name as rep_name, sp.name_en as sale_point_name, coalesce(r.balance,0) as balance
+           from parties p left join users u on u.id = p.rep_user_id left join sale_points sp on sp.id = p.sale_point_id
            left join party_receivables r on r.party_id = p.id where p.id = $1`,
         [id]
       );
@@ -123,10 +185,10 @@ export async function mastersRoutes(app: FastifyInstance) {
       if (dup) throw rule(`${b.nameEn}${b.city ? `, ${b.city}` : ''} already exists (${dup.code})`);
       const r = await one<{ id: number; code: string }>(
         c,
-        `insert into parties(kind, name_en, name_ur, city, phone, tax_no, filer, credit_limit, credit_days, rep_user_id, active, created_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id, code`,
+        `insert into parties(kind, name_en, name_ur, city, phone, tax_no, filer, credit_limit, credit_days, rep_user_id, active, created_by, sale_point_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id, code`,
         [b.kind, b.nameEn, b.nameUr ?? null, b.city ?? null, b.phone ?? null, b.taxNo ?? null, b.filer ?? null,
-          b.creditLimit, b.creditDays, rep, b.active, req.user!.id]
+          b.creditLimit, b.creditDays, rep, b.active, req.user!.id, b.salePointId ?? null]
       );
       await audit(c, req.user!.id, 'create', 'party', r.id, { code: r.code, kind: b.kind, creditLimit: b.creditLimit, rep });
       return { id: r.id, code: r.code };
@@ -142,9 +204,9 @@ export async function mastersRoutes(app: FastifyInstance) {
       // The code and sales rep never change here.
       await c.query(
         `update parties set kind=$2, name_en=$3, name_ur=$4, city=$5, phone=$6, tax_no=$7, filer=$8,
-                credit_limit=$9, credit_days=$10, active=$11 where id=$1`,
+                credit_limit=$9, credit_days=$10, active=$11, sale_point_id=$12 where id=$1`,
         [id, b.kind, b.nameEn, b.nameUr ?? null, b.city ?? null, b.phone ?? null, b.taxNo ?? null, b.filer ?? null,
-          b.creditLimit, b.creditDays, b.active]
+          b.creditLimit, b.creditDays, b.active, b.salePointId ?? null]
       );
       await audit(c, req.user!.id, 'update', 'party', id, { before, after: b });
       return { id };
@@ -269,6 +331,107 @@ export async function mastersRoutes(app: FastifyInstance) {
       )
     )
   );
+
+  app.get('/accounts/next-code', { preHandler: requirePerm('accounts.manage') }, async (req) => {
+    const { parentId } = z.object({ parentId: z.coerce.number().int() }).parse(req.query);
+    return app.read(req, async (c) => ({ code: await suggestCode(c, parentId) }));
+  });
+
+  app.post('/accounts', { preHandler: requirePerm('accounts.manage') }, async (req) => {
+    const b = AccountInput.parse(req.body);
+    return app.mutate(req, 'accounts.create', async (c) => {
+      const parent = await maybeOne<{ id: number; code: string; type: string; postable: boolean }>(
+        c, 'select id, code, type, postable from accounts where id = $1', [b.parentId]);
+      if (!parent) throw notFound('Group');
+      if (parent.postable) throw rule(`${parent.code} takes entries; add accounts under a group instead`);
+      const control = b.control ?? null;
+      if (control && (parent.type !== 'asset' || !b.postable)) throw rule('Cash and bank accounts are asset accounts that take entries');
+      if (control === 'bank' && !b.bank) throw rule('Enter the bank name for a bank account');
+      const code = b.code || (await suggestCode(c, parent.id));
+      if (await maybeOne(c, 'select 1 from accounts where code = $1', [code])) throw rule(`Account code ${code} is already used`);
+      const r = await one<{ id: number }>(
+        c,
+        'insert into accounts(code, name, type, parent_id, postable, control) values ($1,$2,$3,$4,$5,$6) returning id',
+        [code, b.name, parent.type, parent.id, b.postable, control]
+      );
+      if (b.bank) {
+        await c.query('insert into bank_accounts(account_id, bank_name, branch_name, account_title, account_no) values ($1,$2,$3,$4,$5)', [
+          r.id, b.bank.bankName, b.bank.branchName ?? null, b.bank.accountTitle ?? null, b.bank.accountNo ?? null
+        ]);
+      }
+      await audit(c, req.user!.id, 'create', 'account', r.id, { code, ...b });
+      return { id: r.id, code };
+    });
+  });
+
+  app.put('/accounts/:id', { preHandler: requirePerm('accounts.manage') }, async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
+    const b = AccountUpdate.parse(req.body);
+    return app.mutate(req, 'accounts.update', async (c) => {
+      const before = await maybeOne<{ code: string; active: boolean; postable: boolean }>(c, 'select * from accounts where id = $1', [id]);
+      if (!before) throw notFound('Account');
+      if (before.active && !b.active) {
+        const bal = await one<{ b: string }>(c, 'select coalesce(sum(debit - credit),0) as b from posted_lines where account_id = $1', [id]);
+        if (toPaisa(bal.b) !== 0n) throw rule(`${before.code} still has a balance of ${bal.b}; clear it before closing the account`);
+        const kids = await maybeOne(c, 'select 1 from accounts where parent_id = $1 and active', [id]);
+        if (kids) throw rule('Close the accounts under this group first');
+      }
+      await c.query('update accounts set name = $2, active = $3 where id = $1', [id, b.name, b.active]);
+      if (b.bank) {
+        await c.query(
+          `insert into bank_accounts(account_id, bank_name, branch_name, account_title, account_no) values ($1,$2,$3,$4,$5)
+           on conflict (account_id) do update set bank_name = excluded.bank_name, branch_name = excluded.branch_name,
+                  account_title = excluded.account_title, account_no = excluded.account_no`,
+          [id, b.bank.bankName, b.bank.branchName ?? null, b.bank.accountTitle ?? null, b.bank.accountNo ?? null]
+        );
+      }
+      await audit(c, req.user!.id, 'update', 'account', id, { before, after: b });
+      return { id };
+    });
+  });
+
+  // ---------------- Sale points ----------------
+  app.get('/sale-points', { preHandler: requirePerm('masters.read') }, async (req) =>
+    app.read(req, (c) =>
+      many(
+        c,
+        `select sp.*, u.full_name as rep_name,
+                (select count(*) from parties p where p.sale_point_id = sp.id)::int as customers
+           from sale_points sp left join users u on u.id = sp.rep_user_id order by sp.code`
+      )
+    )
+  );
+
+  app.post('/sale-points', { preHandler: requirePerm('masters.write') }, async (req) => {
+    const b = SalePointInput.parse(req.body);
+    return app.mutate(req, 'sale-points.create', async (c) => {
+      const dup = await maybeOne<{ code: string }>(c, 'select code from sale_points where lower(name_en) = lower($1)', [b.nameEn]);
+      if (dup) throw rule(`${b.nameEn} already exists (${dup.code})`);
+      const r = await one<{ id: number; code: string }>(
+        c,
+        `insert into sale_points(code, name_en, name_ur, district, tehsil, rep_user_id, active, created_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8) returning id, code`,
+        [b.code || null, b.nameEn, b.nameUr ?? null, b.district ?? null, b.tehsil ?? null, b.repUserId ?? null, b.active, req.user!.id]
+      );
+      await audit(c, req.user!.id, 'create', 'sale_point', r.id, b);
+      return { id: r.id, code: r.code };
+    });
+  });
+
+  app.put('/sale-points/:id', { preHandler: requirePerm('masters.write') }, async (req) => {
+    const { id } = z.object({ id: z.coerce.number().int() }).parse(req.params);
+    const b = SalePointInput.parse(req.body);
+    return app.mutate(req, 'sale-points.update', async (c) => {
+      const before = await maybeOne(c, 'select * from sale_points where id = $1', [id]);
+      if (!before) throw notFound('Sale point');
+      await c.query(
+        'update sale_points set name_en=$2, name_ur=$3, district=$4, tehsil=$5, rep_user_id=$6, active=$7 where id=$1',
+        [id, b.nameEn, b.nameUr ?? null, b.district ?? null, b.tehsil ?? null, b.repUserId ?? null, b.active]
+      );
+      await audit(c, req.user!.id, 'update', 'sale_point', id, { before, after: b });
+      return { id };
+    });
+  });
 
   app.get('/cost-centres', { preHandler: requirePerm('masters.read') }, async (req) =>
     app.read(req, (c) => many(c, 'select * from cost_centres order by id'))

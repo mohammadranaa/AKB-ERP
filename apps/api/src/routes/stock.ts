@@ -85,6 +85,8 @@ export async function stockRoutes(app: FastifyInstance) {
     businessDate: DateStr.optional(),
     branchId: z.number().int(),
     supplierId: z.number().int().nullish(),
+    /** The company order the bags came against (the company is then taken from the order). */
+    companyOrderId: z.number().int().nullish(),
     companyOrderRef: z.string().trim().max(60).nullish(),
     truckNo: z.string().trim().max(30).nullish(),
     note: z.string().max(500).nullish(),
@@ -105,11 +107,18 @@ export async function stockRoutes(app: FastifyInstance) {
     const date = b.businessDate ?? app.today();
     return app.mutate(req, 'goods-receipts.create', async (c) => {
       await assertBranch(c, req.user!, b.branchId);
+      let ref = b.companyOrderRef ?? null;
+      if (b.companyOrderId) {
+        const o = await maybeOne<{ order_no: string; company_order_no: string | null }>(
+          c, 'select order_no, company_order_no from company_orders where id = $1', [b.companyOrderId]);
+        if (!o) throw notFound('Company order');
+        ref = o.company_order_no ? `${o.order_no} / CO ${o.company_order_no}` : o.order_no;
+      }
       const gr = await one<{ id: string; gr_no: string }>(
         c,
-        `insert into goods_receipts(gr_no, business_date, branch_id, supplier_id, company_order_ref, truck_no, note, created_by)
-         values (next_doc_no('GR',$1),$1,$2,$3,$4,$5,$6,$7) returning id, gr_no`,
-        [date, b.branchId, b.supplierId ?? null, b.companyOrderRef ?? null, b.truckNo ?? null, b.note ?? null, req.user!.id]
+        `insert into goods_receipts(gr_no, business_date, branch_id, supplier_id, company_order_ref, truck_no, note, created_by, company_order_id)
+         values (next_doc_no('GR',$1),$1,$2,$3,$4,$5,$6,$7,$8) returning id, gr_no`,
+        [date, b.branchId, b.supplierId ?? null, ref, b.truckNo ?? null, b.note ?? null, req.user!.id, b.companyOrderId ?? null]
       );
       for (const l of b.lines) {
         if (l.bagsDamaged > l.bagsReceived) throw rule('Damaged bags cannot exceed bags received');
@@ -117,7 +126,7 @@ export async function stockRoutes(app: FastifyInstance) {
           'insert into goods_receipt_lines(gr_id, product_id, bags_received, bags_short, bags_damaged) values ($1,$2,$3,$4,$5)',
           [gr.id, l.productId, l.bagsReceived, l.bagsShort, l.bagsDamaged]
         );
-        await move(c, { date, kind: 'receipt', productId: l.productId, branchId: b.branchId, bags: l.bagsReceived, refType: 'goods_receipt', refId: gr.gr_no, note: b.companyOrderRef ?? null, userId: req.user!.id });
+        await move(c, { date, kind: 'receipt', productId: l.productId, branchId: b.branchId, bags: l.bagsReceived, refType: 'goods_receipt', refId: gr.gr_no, note: ref, userId: req.user!.id });
         if (l.bagsDamaged > 0) {
           // Damaged bags are received, then held back as an adjustment request for approval.
           await c.query(

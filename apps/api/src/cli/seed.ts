@@ -167,6 +167,40 @@ export async function seed(url: string, opts: { date: string; log?: (s: string) 
     }
     await c.query('insert into journal_lines(entry_id, line_no, account_id, debit, credit) values ($1,$2,$3,0,$4)', [entry, n, await acc('3300'), total.toFixed(2)]);
 
+    // Sale points, dealer codes and one open company order (no postings, so balances above are unchanged).
+    const salePoints: Record<string, number> = {};
+    for (const [key, en, ur, district, rep] of [
+      ['LHR', 'Lahore', 'لاہور', 'Lahore', 'sales1'],
+      ['CHS', 'Chishtian', 'چشتیاں', 'Bahawalnagar', 'sales1'],
+      ['BWP', 'Bahawalpur', 'بہاولپور', 'Bahawalpur', 'sales2'],
+      ['MUL', 'Multan', 'ملتان', 'Multan', 'sales2']
+    ] as const) {
+      salePoints[key] = (await c.query(
+        'insert into sale_points(name_en, name_ur, district, rep_user_id) values ($1,$2,$3,$4) returning id', [en, ur, district, users[rep]]
+      )).rows[0].id;
+    }
+    for (const [cust, sp] of [['C001', 'LHR'], ['C003', 'CHS'], ['C005', 'BWP'], ['C006', 'BWP'], ['C007', 'MUL']] as const) {
+      await c.query('update parties set sale_point_id = $2 where id = $1', [parties[cust], salePoints[sp]]);
+    }
+    const dealerCodes: Record<string, number> = {};
+    for (const [key, sup, code, title, district] of [
+      ['FFC-SWL', 'S002', '2130004749', 'FFC SWL CC# 2130004749', 'Sahiwal'],
+      ['FFC-MUL', 'S002', '2130005120', 'FFC MUL CC# 2130005120', 'Multan'],
+      ['FAT-SWL', 'S001', 'FF-88231', 'Fatima SWL FF-88231', 'Sahiwal'],
+      ['ENG-DHK', 'S003', 'EN-40177', 'Engro Daharki EN-40177', 'Ghotki']
+    ] as const) {
+      dealerCodes[key] = (await c.query(
+        'insert into dealer_codes(firm_id, supplier_id, code, title, district, created_by) values ($1,$2,$3,$4,$5,$6) returning id',
+        [firm, parties[sup], code, title, district, users.admin]
+      )).rows[0].id;
+    }
+    await c.query(
+      `insert into company_orders(order_no, company_order_no, order_date, firm_id, dealer_code_id, supplier_id, product_id, location_id,
+                                  bags, rate, bg_charge_per_bag, credit_days, note, created_by)
+       values (next_doc_no('PO',$1),'CO-77120',$1,$2,$3,$4,$5,$6,2000,'4250.00','12.00',30,'Demo order',$7)`,
+      [opts.date, firm, dealerCodes['FFC-SWL'], parties.S002, products['SONA-U'], branches.SWL, users.admin]
+    );
+
     await c.query("insert into audit_log(user_id, action, entity, entity_id, detail) values ($1,'seed','database',null,'{\"demo\":true}')", [users.admin]);
     await c.query('commit');
     log(`Seeded demo data. Sign in as owner / ${opts.password ? '(the trial password)' : DEMO_PASSWORD} (other users: ${DEMO_USERS.map((u) => u.username).join(', ')})`);
